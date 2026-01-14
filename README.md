@@ -104,7 +104,7 @@ Here is what the result looks like rendered by [3dmol](https://3dmol.org/doc/ind
 # Installation 
 
 ```bash
-git clone [https://github.com/lowdanie/hartree-fock-solver.git](https://github.com/lowdanie/hartree-fock-solver.git)
+git clone https://github.com/lowdanie/hartree-fock-solver.git
 cd hartree-fock-solver
 
 pip install -e .
@@ -124,6 +124,13 @@ pytest -m ""
 # Check code coverage
 pytest --cov=slaterform
 ```
+
+# Theory
+
+For the details of the math, physics and algorithms behind this library see:
+
+* [Hartree Fock I: Ground State Estimation](https://www.daniellowengrub.com/blog/2025/07/26/scf)
+* [Hartree Fock II: Electron Integrals](https://www.daniellowengrub.com/blog/2025/11/14/electron-integrals)
 
 
 
