@@ -79,6 +79,11 @@ class Options:
 
     convergence_threshold: types.Scalar = 1e-6
     perturbation: types.Scalar = 0.0
+
+    # Damping factor [0.0, 1.0).
+    # 0.0 means no damping (use 100% new density).
+    damping: types.Scalar = 0.0
+
     callback: CallbackOptions = dataclasses.field(
         default_factory=CallbackOptions
     )
@@ -90,6 +95,7 @@ class Options:
         children = (
             self.convergence_threshold,
             self.perturbation,
+            self.damping,
             self.callback,
         )
         aux_data = (
@@ -107,7 +113,8 @@ class Options:
             integral_strategy=aux_data[2],
             convergence_threshold=children[0],
             perturbation=children[1],
-            callback=children[2],
+            damping=children[2],
+            callback=children[3],
         )
 
     @classmethod
@@ -325,7 +332,11 @@ def scf_step(state: State, options: Options) -> State:
         state.F, state.context.X, options.perturbation
     )
     # shape (n_basis, n_basis)
-    P = closed_shell_matrix(C, state.context.basis.n_electrons)
+    P_new = closed_shell_matrix(C, state.context.basis.n_electrons)
+
+    # Damping.
+    alpha = jax.lax.select(state.iteration > 0, options.damping, 0.0)
+    P = (1.0 - alpha) * P_new + alpha * state.P
 
     # Compute the Fock matrix and energy for the new density P.
     # shape (n_basis, n_basis)
