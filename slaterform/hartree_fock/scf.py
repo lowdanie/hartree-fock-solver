@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
 import functools
 import enum
 
@@ -24,13 +24,14 @@ from slaterform.hartree_fock.roothaan import (
     orthogonalize_basis,
     solve as solve_roothaan,
 )
+from slaterform.jax_utils.implicit import attach_implicit_jvp
 from slaterform.structure.batched_basis import BatchedBasis
 from slaterform.structure.molecule import Molecule
 from slaterform.structure.nuclear import (
     repulsion_energy as nuclear_repulsion_energy,
 )
 
-SolverCallback = Callable[["State"], None]
+SolverCallback = Callable[["SolverStep"], None]
 
 
 class IntegralStrategy(enum.IntEnum):
@@ -177,8 +178,6 @@ class Context:
 @register_pytree_node_class
 @dataclasses.dataclass
 class State:
-    iteration: jax.Array
-
     # Molecular orbital coefficients matrix. shape (n_basis, n_basis)
     C: jax.Array
 
@@ -199,7 +198,6 @@ class State:
 
     def tree_flatten(self):
         children = (
-            self.iteration,
             self.C,
             self.P,
             self.F,
@@ -214,6 +212,11 @@ class State:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
+
+
+class SolverStep(NamedTuple):
+    state: State
+    iteration: jax.Array
 
 
 @register_pytree_node_class
@@ -286,7 +289,6 @@ def build_initial_state(context: Context, options: Options) -> State:
     conv_thresh_sq = jnp.square(options.convergence_threshold)
 
     return State(
-        iteration=jnp.array(0, dtype=jnp.int32),
         C=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
         P=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
         F=context.H_core,
@@ -297,14 +299,24 @@ def build_initial_state(context: Context, options: Options) -> State:
     )
 
 
-def _is_converged(state: State, options: Options) -> jax.Array:
-    return state.delta_P_sq <= jnp.square(options.convergence_threshold)
+def build_initial_step(context: Context, options: Options) -> SolverStep:
+    return SolverStep(
+        state=build_initial_state(context, options),
+        iteration=jnp.array(0, dtype=jnp.int32),
+    )
 
 
-def build_result(state: State, context: Context, options: Options) -> Result:
+def _is_converged(step: SolverStep, options: Options) -> jax.Array:
+    return step.state.delta_P_sq <= jnp.square(options.convergence_threshold)
+
+
+def build_result(
+    step: SolverStep, context: Context, options: Options
+) -> Result:
+    state = step.state
     return Result(
-        converged=_is_converged(state, options),
-        iterations=state.iteration,
+        converged=_is_converged(step, options),
+        iterations=step.iteration,
         electronic_energy=state.electronic_energy,
         nuclear_energy=context.nuclear_energy,
         total_energy=state.total_energy,
@@ -316,7 +328,7 @@ def build_result(state: State, context: Context, options: Options) -> Result:
 
 
 def _two_electron_matrix(
-    state: State, P: jax.Array, context: Context, options: Options
+    P: jax.Array, context: Context, options: Options
 ) -> jax.Array:
     if options.integral_strategy == IntegralStrategy.DIRECT:
         G = two_electron_matrix(context.basis, P)
@@ -332,7 +344,9 @@ def _two_electron_matrix(
     return G
 
 
-def scf_step(state: State, context: Context, options: Options) -> State:
+def scf_step(
+    state: State, context: Context, options: Options, iteration: jax.Array
+) -> State:
     # Solve for new orbital coefficients and density.
     # C has shape (n_basis, n_basis)
     orbital_energies, C = solve_roothaan(
@@ -342,17 +356,16 @@ def scf_step(state: State, context: Context, options: Options) -> State:
     P_new = closed_shell_matrix(C, context.basis.n_electrons)
 
     # Damping.
-    alpha = jax.lax.select(state.iteration > 0, options.damping, 0.0)
+    alpha = jax.lax.select(iteration > 0, options.damping, 0.0)
     P = (1.0 - alpha) * P_new + alpha * state.P
 
     # Compute the Fock matrix and energy for the new density P.
     # shape (n_basis, n_basis)
-    G = _two_electron_matrix(state, P, context, options)
+    G = _two_electron_matrix(P, context, options)
     F = context.H_core + G  # shape (n_basis, n_basis)
     electronic_energy_val = electronic_energy(context.H_core, F, P)
 
     return State(
-        iteration=state.iteration + 1,
         C=C,
         P=P,
         F=F,
@@ -376,21 +389,21 @@ def _build_basis(
         )
 
 
-def _should_continue(state: State, options: Options) -> jax.Array:
+def _should_continue(step: SolverStep, options: Options) -> jax.Array:
     return jnp.logical_and(
-        jnp.logical_not(_is_converged(state, options)),
-        state.iteration < options.max_iterations,
+        jnp.logical_not(_is_converged(step, options)),
+        step.iteration < options.max_iterations,
     )
 
 
-def _maybe_run_callback(state: State, options: CallbackOptions) -> None:
+def _maybe_run_callback(step: SolverStep, options: CallbackOptions) -> None:
     if options.func is None:
         return
 
-    should_run = state.iteration % options.interval == 0
+    should_run = step.iteration % options.interval == 0
 
     def run_callback():
-        jax.debug.callback(options.func, state)
+        jax.debug.callback(options.func, step)
 
     def noop_callback():
         return None
@@ -399,45 +412,68 @@ def _maybe_run_callback(state: State, options: CallbackOptions) -> None:
 
 
 @jax.checkpoint
-def _perform_step(state: State, context: Context, options: Options) -> State:
-    state = scf_step(state, context, options)
-    _maybe_run_callback(state, options.callback)
+def _perform_step(
+    step: SolverStep, context: Context, options: Options
+) -> SolverStep:
+    state = scf_step(step.state, context, options, step.iteration)
+    step = SolverStep(state=state, iteration=step.iteration + 1)
+    _maybe_run_callback(step, options.callback)
 
-    return state
+    return step
 
 
-def _solve_convergence(context: Context, options: Options) -> Result:
+def _solve_convergence(context: Context, options: Options) -> SolverStep:
     """Performs the self-consistent field (SCF) procedure to compute the
     molecular orbital coefficients and energy.
 
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
-    state = build_initial_state(context, options)
+    step = build_initial_step(context, options)
 
     cond_fn = functools.partial(_should_continue, options=options)
     step_fn = functools.partial(_perform_step, context=context, options=options)
-    state = jax.lax.while_loop(cond_fn, step_fn, state)
+    step = jax.lax.while_loop(cond_fn, step_fn, step)
 
-    return build_result(state, context, options)
+    return step
 
 
-def _solve_fixed(context: Context, options: Options) -> Result:
+def _solve_fixed(context: Context, options: Options) -> SolverStep:
     """Performs the self-consistent field (SCF) procedure to compute the
     molecular orbital coefficients and energy.
 
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
-    state = build_initial_state(context, options)
+    step = build_initial_step(context, options)
 
-    def scan_fn(state, _):
-        state = _perform_step(state, context, options)
-        return state, None
+    def scan_fn(step, _):
+        step = _perform_step(step, context, options)
+        return step, None
 
-    state, _ = jax.lax.scan(scan_fn, state, None, length=options.max_iterations)
+    step, _ = jax.lax.scan(scan_fn, step, None, length=options.max_iterations)
 
-    return build_result(state, context, options)
+    return step
+
+
+def _solve_implicit(context: Context, options: Options) -> SolverStep:
+    """Implicit differentiation solver."""
+
+    # The fixed point mapping: (state, context) -> state
+    def fixed_point_step(state, ctx):
+        return scf_step(state, ctx, options, iteration=jnp.asarray(0))
+
+    # The primal solver. context -> (state, aux)
+    def primal_solver(ctx):
+        step = _solve_convergence(ctx, options)
+        return step.state, step.iteration
+
+    solve_fn = attach_implicit_jvp(
+        fixed_point_step, primal_solver, has_aux=True
+    )
+
+    state, iteration = solve_fn(context)
+    return SolverStep(state=state, iteration=iteration)
 
 
 def solve(
@@ -451,10 +487,15 @@ def solve(
     """
     basis = _build_basis(system)
     context = build_context(basis, options)
+    step: SolverStep
 
     if options.execution_mode == ExecutionMode.CONVERGENCE:
-        return _solve_convergence(context, options)
+        step = _solve_convergence(context, options)
     elif options.execution_mode == ExecutionMode.FIXED:
-        return _solve_fixed(context, options)
+        step = _solve_fixed(context, options)
+    elif options.execution_mode == ExecutionMode.IMPLICIT:
+        step = _solve_implicit(context, options)
     else:
         raise ValueError(f"Unknown execution mode: {options.execution_mode}")
+
+    return build_result(step, context, options)

@@ -108,6 +108,15 @@ def _build_h2_molecule(bond_length: jax.Array) -> sf.Molecule:
     )
 
 
+def _value_and_jacfwd(f):
+    def _wrapper(x):
+        val = f(x)
+        jac = jax.jacfwd(f)(x)
+        return val, jac
+
+    return _wrapper
+
+
 def test_callback_options_pytree():
     options = scf.CallbackOptions(
         interval=10,
@@ -141,7 +150,6 @@ def test_context_pytree():
 
 def test_state_pytree():
     state = scf.State(
-        iteration=jnp.array(0, dtype=jnp.int32),
         C=4 * jnp.ones((2, 2)),
         P=5 * jnp.ones((2, 2)),
         F=6 * jnp.ones((2, 2)),
@@ -184,7 +192,20 @@ def test_result_pytree():
             integral_strategy=scf.IntegralStrategy.DIRECT,
         ),
         scf.Options(
+            execution_mode=scf.ExecutionMode.IMPLICIT,
+            integral_strategy=scf.IntegralStrategy.DIRECT,
+        ),
+        scf.Options(
             execution_mode=scf.ExecutionMode.CONVERGENCE,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+        ),
+        scf.Options(
+            max_iterations=10,
+            execution_mode=scf.ExecutionMode.FIXED,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+        ),
+        scf.Options(
+            execution_mode=scf.ExecutionMode.IMPLICIT,
             integral_strategy=scf.IntegralStrategy.CACHED,
         ),
         scf.Options.differentiable(steps=10),
@@ -228,8 +249,8 @@ def test_H2_gradients():
             steps=20,
             callback=scf.CallbackOptions(
                 interval=1,
-                func=lambda state: print(
-                    f"Iteration {state.iteration}: E = {state.electronic_energy:.8f} Ha"
+                func=lambda step: print(
+                    f"Iteration {step.iteration}: E = {step.state.electronic_energy:.8f} Ha"
                 ),
             ),
         )
@@ -244,6 +265,52 @@ def test_H2_gradients():
     assert np.abs(grad_E) < 0.1
 
 
+def test_H2_implicit_gradients():
+    def energy(bond_length: jax.Array) -> jax.Array:
+        mol = _build_h2_molecule(bond_length)
+        options = scf.Options(
+            execution_mode=scf.ExecutionMode.IMPLICIT,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+        )
+        result = scf.solve(mol, options)
+        return result.total_energy
+
+    val_and_grad_fn = jit(_value_and_jacfwd(energy))
+    E, grad_E = val_and_grad_fn(1.4)
+
+    np.testing.assert_almost_equal(E, _EXPECTED_TOTAL_ENERGY_H2, decimal=4)
+    assert not np.isnan(grad_E)
+    assert np.abs(grad_E) < 0.1
+
+
+def test_H2_implicit_grad_consistency():
+    bond_length = 1.4
+
+    def energy_fixed(r):
+        mol = _build_h2_molecule(r)
+        options = scf.Options.differentiable(steps=50)
+        return scf.solve(mol, options).total_energy
+
+    grad_fixed = jit(jax.grad(energy_fixed))(bond_length)
+
+    def energy_implicit(r):
+        mol = _build_h2_molecule(r)
+        options = scf.Options(
+            execution_mode=scf.ExecutionMode.IMPLICIT,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+            convergence_threshold=1e-8,
+        )
+        return scf.solve(mol, options).total_energy
+
+    grad_implicit = jit(jax.jacfwd(energy_implicit))(bond_length)
+
+    # 3. Assert they are compatible
+    print(f"\nGradient Fixed:    {grad_fixed:.8f}")
+    print(f"Gradient Implicit: {grad_implicit:.8f}")
+
+    np.testing.assert_allclose(grad_fixed, grad_implicit, rtol=1e-4, atol=1e-4)
+
+
 @pytest.mark.slow
 def test_H2O():
     basis = sf.BatchedBasis.from_molecule(_H2O_MOLECULE)
@@ -251,8 +318,8 @@ def test_H2O():
         steps=20,
         callback=scf.CallbackOptions(
             interval=1,
-            func=lambda state: print(
-                f"Iteration {state.iteration}: E = {state.electronic_energy:.8f} Ha"
+            func=lambda step: print(
+                f"Iteration {step.iteration}: E = {step.state.electronic_energy:.8f} Ha"
             ),
         ),
     )

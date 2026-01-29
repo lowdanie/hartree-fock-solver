@@ -31,6 +31,33 @@ def test_scalar_fixed_point():
     np.testing.assert_allclose(grad, expected_grad, rtol=1e-5, atol=1e-8)
 
 
+def test_scalar_with_aux_fixed_point():
+    def scalar_step(x, p):
+        return jnp.asarray(0.5 * x + p)
+
+    # Fixed point is x = 2 * p
+    p_val = 5.0
+    expected_aux = 6.0
+    expected_x = 10.0
+    expected_grad = 2.0
+
+    def fake_solver(p):
+        return expected_x, expected_aux
+
+    implicit_solver = implicit.attach_implicit_jvp(
+        scalar_step, fake_solver, has_aux=True
+    )
+
+    x, aux = implicit_solver(p_val)
+    np.testing.assert_allclose(x, expected_x, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(aux, expected_aux, rtol=1e-5, atol=1e-8)
+
+    grad_fn = jax.jacfwd(implicit_solver, has_aux=True)
+    grad, aux = grad_fn(p_val)
+    np.testing.assert_allclose(aux, expected_aux, rtol=1e-5, atol=1e-8)
+    np.testing.assert_allclose(grad, expected_grad, rtol=1e-5, atol=1e-8)
+
+
 def test_pytree_fixed_point():
     # Step: (x, y) -> (0.5 * x + p, 0.25 * y + p)
     # Fixed point is: x = 2 * p, y = (4/3) * p

@@ -4,7 +4,7 @@ import functools
 import jax
 import jax.numpy as jnp
 from jax.scipy.sparse.linalg import gmres
-
+from jax.flatten_util import ravel_pytree
 
 Params = TypeVar("Params")
 State = TypeVar("State")
@@ -41,6 +41,7 @@ def _implicit_rhs(
 def attach_implicit_jvp(
     step_fn: StepFn,
     solver_fn: FixedPointSolverFn,
+    has_aux: bool = False,
 ):
     """
     Wraps a non-differentiable solver with implicit differentiation.
@@ -60,6 +61,9 @@ def attach_implicit_jvp(
         step_fn:   Function defining the fixed point equation: state = step(state, params).
                    MUST be a true fixed point (input == output at convergence).
                    Args: (state, params) -> state
+        has_aux:   Whether the solver_fn returns auxiliary data along with the state.
+                   If true, the solver is expected to return (state, aux).
+                   The aux data is not differentiated through.
     """
 
     @jax.custom_jvp
@@ -72,19 +76,32 @@ def attach_implicit_jvp(
         d_params = tangents[0]
 
         # Compute the fixed point state.
-        state_star = _solve(params)
+        out_primals = solver_fn(params)
 
-        # LHS Operator: v -> (I - J_state(step)) * v
-        matvec = functools.partial(
-            _implicit_lhs, step_fn=step_fn, state=state_star, params=params
-        )
+        if has_aux:
+            state_star, aux = out_primals
+            _, d_aux = jax.jvp(lambda _: aux, (0.0,), (0.0,))
+        else:
+            state_star = out_primals
 
         # RHS Vector: u = J_params(step) * d_params
         u = _implicit_rhs(d_params, step_fn, state_star, params)
+        u_flat, unravel_fn = ravel_pytree(u)
+
+        # LHS Operator: v -> (I - J_state(step)) * v
+        def matvec_flat(v_flat):
+            v = unravel_fn(v_flat)
+            Av = _implicit_lhs(v, step_fn, state_star, params)
+            Av_flat, _ = ravel_pytree(Av)
+            return Av_flat
 
         # Solve: A * d_state = u
-        d_state_star, _ = gmres(matvec, u, tol=1e-5)
+        d_state_star_flat, _ = gmres(matvec_flat, u_flat, tol=1e-5)
+        d_state_star = unravel_fn(d_state_star_flat)
 
-        return state_star, d_state_star
+        if has_aux:
+            return (state_star, aux), (d_state_star, d_aux)
+        else:
+            return state_star, d_state_star
 
     return _solve
