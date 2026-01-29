@@ -38,7 +38,7 @@ def _implicit_rhs(
     return u
 
 
-def attach_implicit_gradient(
+def attach_implicit_jvp(
     step_fn: StepFn,
     solver_fn: FixedPointSolverFn,
 ):

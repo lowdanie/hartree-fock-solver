@@ -24,9 +24,7 @@ def test_scalar_fixed_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_gradient(
-        scalar_step, fake_solver
-    )
+    implicit_solver = implicit.attach_implicit_jvp(scalar_step, fake_solver)
 
     grad_fn = jax.jacfwd(implicit_solver)
     grad = grad_fn(p_val)
@@ -46,7 +44,7 @@ def test_pytree_fixed_point():
     def fake_solver(p):
         return expected_tree
 
-    implicit_solver = implicit.attach_implicit_gradient(tree_step, fake_solver)
+    implicit_solver = implicit.attach_implicit_jvp(tree_step, fake_solver)
     grad_fn = jax.jacfwd(implicit_solver)
     grad = grad_fn(p_val)
 
@@ -77,9 +75,7 @@ def test_scalar_nonlinear_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_gradient(
-        scalar_step, fake_solver
-    )
+    implicit_solver = implicit.attach_implicit_jvp(scalar_step, fake_solver)
 
     grad_fn = jax.jacfwd(implicit_solver)
     grad = grad_fn(p_val)
@@ -102,9 +98,7 @@ def test_vector_fixed_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_gradient(
-        vector_step, fake_solver
-    )
+    implicit_solver = implicit.attach_implicit_jvp(vector_step, fake_solver)
 
     grad_fn = jax.jacfwd(implicit_solver)
     jacobian = grad_fn(p)
