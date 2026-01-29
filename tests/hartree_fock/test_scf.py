@@ -140,17 +140,8 @@ def test_context_pytree():
 
 
 def test_state_pytree():
-    basis = sf.BatchedBasis.from_molecule(_H2_MOLECULE)
-    context = scf.Context(
-        basis=basis,
-        nuclear_energy=jnp.asarray(1.0),
-        S=jnp.ones((2, 2)),
-        X=2 * jnp.ones((2, 2)),
-        H_core=3 * jnp.ones((2, 2)),
-    )
     state = scf.State(
         iteration=jnp.array(0, dtype=jnp.int32),
-        context=context,
         C=4 * jnp.ones((2, 2)),
         P=5 * jnp.ones((2, 2)),
         F=6 * jnp.ones((2, 2)),

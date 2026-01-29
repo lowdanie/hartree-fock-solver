@@ -39,10 +39,15 @@ class IntegralStrategy(enum.IntEnum):
 
 
 class ExecutionMode(enum.IntEnum):
-    CONVERGENCE = (
-        0  # Checks threshold, variable iterations. Not differentiable.
-    )
-    FIXED = 1  # Fixed number of iterations. Differentiable.
+    # Runs until convergence. Not differentiable.
+    CONVERGENCE = 0
+
+    # Runs for a fixed number of iterations. Differentiable.
+    FIXED = 1
+
+    # Runs until convergence and is forward differentiable
+    # via implicit differentiation.
+    IMPLICIT = 2
 
 
 @register_pytree_node_class
@@ -173,7 +178,6 @@ class Context:
 @dataclasses.dataclass
 class State:
     iteration: jax.Array
-    context: Context
 
     # Molecular orbital coefficients matrix. shape (n_basis, n_basis)
     C: jax.Array
@@ -196,7 +200,6 @@ class State:
     def tree_flatten(self):
         children = (
             self.iteration,
-            self.context,
             self.C,
             self.P,
             self.F,
@@ -258,8 +261,7 @@ class Result:
         return cls(*children)
 
 
-def build_initial_state(basis: BatchedBasis, options: Options) -> State:
-    n_basis = basis.n_basis
+def build_context(basis: BatchedBasis, options: Options) -> Context:
     S = overlap_matrix(basis)
     H_core = core_hamiltonian_matrix(basis)
     nuclear_energy = nuclear_repulsion_energy(basis.atoms)
@@ -268,23 +270,28 @@ def build_initial_state(basis: BatchedBasis, options: Options) -> State:
     if options.integral_strategy == IntegralStrategy.CACHED:
         V = two_electron_integrals(basis)
 
+    return Context(
+        basis=basis,
+        nuclear_energy=nuclear_energy,
+        S=S,
+        X=orthogonalize_basis(S, perturbation=0.0),
+        H_core=H_core,
+        V=V,
+    )
+
+
+def build_initial_state(context: Context, options: Options) -> State:
+    n_basis = context.basis.n_basis
+
     conv_thresh_sq = jnp.square(options.convergence_threshold)
 
     return State(
         iteration=jnp.array(0, dtype=jnp.int32),
-        context=Context(
-            basis=basis,
-            nuclear_energy=nuclear_energy,
-            S=S,
-            X=orthogonalize_basis(S, perturbation=options.perturbation),
-            H_core=H_core,
-            V=V,
-        ),
         C=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
         P=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
-        F=H_core,
+        F=context.H_core,
         electronic_energy=jnp.asarray(0.0, dtype=jnp.float64),
-        total_energy=nuclear_energy,
+        total_energy=context.nuclear_energy,
         orbital_energies=jnp.zeros(n_basis, dtype=jnp.float64),
         delta_P_sq=jnp.array(conv_thresh_sq + 1.0, dtype=jnp.float64),
     )
@@ -294,14 +301,14 @@ def _is_converged(state: State, options: Options) -> jax.Array:
     return state.delta_P_sq <= jnp.square(options.convergence_threshold)
 
 
-def build_result(state: State, options: Options) -> Result:
+def build_result(state: State, context: Context, options: Options) -> Result:
     return Result(
         converged=_is_converged(state, options),
         iterations=state.iteration,
         electronic_energy=state.electronic_energy,
-        nuclear_energy=state.context.nuclear_energy,
+        nuclear_energy=context.nuclear_energy,
         total_energy=state.total_energy,
-        basis=state.context.basis,
+        basis=context.basis,
         orbital_energies=state.orbital_energies,
         orbitals=state.C,
         density=state.P,
@@ -309,30 +316,30 @@ def build_result(state: State, options: Options) -> Result:
 
 
 def _two_electron_matrix(
-    state: State, P: jax.Array, options: Options
+    state: State, P: jax.Array, context: Context, options: Options
 ) -> jax.Array:
     if options.integral_strategy == IntegralStrategy.DIRECT:
-        G = two_electron_matrix(state.context.basis, P)
+        G = two_electron_matrix(context.basis, P)
     elif options.integral_strategy == IntegralStrategy.CACHED:
-        if state.context.V is None:
+        if context.V is None:
             raise ValueError(
                 "Two-electron integrals tensor is not cached in context."
             )
-        G = two_electron_matrix_from_integrals(state.context.V, P)
+        G = two_electron_matrix_from_integrals(context.V, P)
     else:
         raise ValueError(f"Unknown strategy: {options.integral_strategy}")
 
     return G
 
 
-def scf_step(state: State, options: Options) -> State:
+def scf_step(state: State, context: Context, options: Options) -> State:
     # Solve for new orbital coefficients and density.
     # C has shape (n_basis, n_basis)
     orbital_energies, C = solve_roothaan(
-        state.F, state.context.X, options.perturbation
+        state.F, context.X, options.perturbation
     )
     # shape (n_basis, n_basis)
-    P_new = closed_shell_matrix(C, state.context.basis.n_electrons)
+    P_new = closed_shell_matrix(C, context.basis.n_electrons)
 
     # Damping.
     alpha = jax.lax.select(state.iteration > 0, options.damping, 0.0)
@@ -340,18 +347,17 @@ def scf_step(state: State, options: Options) -> State:
 
     # Compute the Fock matrix and energy for the new density P.
     # shape (n_basis, n_basis)
-    G = _two_electron_matrix(state, P, options)
-    F = state.context.H_core + G  # shape (n_basis, n_basis)
-    electronic_energy_val = electronic_energy(state.context.H_core, F, P)
+    G = _two_electron_matrix(state, P, context, options)
+    F = context.H_core + G  # shape (n_basis, n_basis)
+    electronic_energy_val = electronic_energy(context.H_core, F, P)
 
     return State(
         iteration=state.iteration + 1,
-        context=state.context,
         C=C,
         P=P,
         F=F,
         electronic_energy=electronic_energy_val,
-        total_energy=electronic_energy_val + state.context.nuclear_energy,
+        total_energy=electronic_energy_val + context.nuclear_energy,
         orbital_energies=orbital_energies,
         delta_P_sq=jnp.sum(jnp.square(P - state.P)),
     )
@@ -393,49 +399,45 @@ def _maybe_run_callback(state: State, options: CallbackOptions) -> None:
 
 
 @jax.checkpoint
-def _perform_step(state: State, options: Options) -> State:
-    state = scf_step(state, options)
+def _perform_step(state: State, context: Context, options: Options) -> State:
+    state = scf_step(state, context, options)
     _maybe_run_callback(state, options.callback)
 
     return state
 
 
-def _solve_convergence(
-    system: BatchedBasis | Molecule, options: Options
-) -> Result:
+def _solve_convergence(context: Context, options: Options) -> Result:
     """Performs the self-consistent field (SCF) procedure to compute the
     molecular orbital coefficients and energy.
 
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
-    basis = _build_basis(system)
-    state = build_initial_state(basis, options)
+    state = build_initial_state(context, options)
 
     cond_fn = functools.partial(_should_continue, options=options)
-    step_fn = functools.partial(_perform_step, options=options)
+    step_fn = functools.partial(_perform_step, context=context, options=options)
     state = jax.lax.while_loop(cond_fn, step_fn, state)
 
-    return build_result(state, options)
+    return build_result(state, context, options)
 
 
-def _solve_fixed(system: BatchedBasis | Molecule, options: Options) -> Result:
+def _solve_fixed(context: Context, options: Options) -> Result:
     """Performs the self-consistent field (SCF) procedure to compute the
     molecular orbital coefficients and energy.
 
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
-    basis = _build_basis(system)
-    state = build_initial_state(basis, options)
+    state = build_initial_state(context, options)
 
     def scan_fn(state, _):
-        state = _perform_step(state, options)
+        state = _perform_step(state, context, options)
         return state, None
 
     state, _ = jax.lax.scan(scan_fn, state, None, length=options.max_iterations)
 
-    return build_result(state, options)
+    return build_result(state, context, options)
 
 
 def solve(
@@ -447,9 +449,12 @@ def solve(
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
+    basis = _build_basis(system)
+    context = build_context(basis, options)
+
     if options.execution_mode == ExecutionMode.CONVERGENCE:
-        return _solve_convergence(system, options)
+        return _solve_convergence(context, options)
     elif options.execution_mode == ExecutionMode.FIXED:
-        return _solve_fixed(system, options)
+        return _solve_fixed(context, options)
     else:
         raise ValueError(f"Unknown execution mode: {options.execution_mode}")
