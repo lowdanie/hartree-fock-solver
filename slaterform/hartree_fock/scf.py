@@ -344,6 +344,7 @@ def _two_electron_matrix(
     return G
 
 
+@jax.checkpoint
 def scf_step(
     state: State, context: Context, options: Options, iteration: jax.Array
 ) -> State:
@@ -411,7 +412,6 @@ def _maybe_run_callback(step: SolverStep, options: CallbackOptions) -> None:
     jax.lax.cond(should_run, run_callback, noop_callback)
 
 
-@jax.checkpoint
 def _perform_step(
     step: SolverStep, context: Context, options: Options
 ) -> SolverStep:
