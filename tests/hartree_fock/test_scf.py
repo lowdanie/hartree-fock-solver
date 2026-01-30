@@ -108,6 +108,23 @@ def _build_h2_molecule(bond_length: jax.Array) -> sf.Molecule:
     )
 
 
+def _update_molecule_geometry(
+    template_mol: sf.Molecule, new_positions: jax.Array
+) -> sf.Molecule:
+    """Creates a new Molecule with the new positions."""
+    new_atoms = []
+    for i, atom in enumerate(template_mol.atoms):
+        new_atoms.append(
+            sf.Atom(
+                symbol=atom.symbol,
+                number=atom.number,
+                position=new_positions[i],
+                shells=atom.shells,
+            )
+        )
+    return sf.Molecule(new_atoms)
+
+
 def test_callback_options_pytree():
     options = scf.CallbackOptions(
         interval=10,
@@ -305,8 +322,10 @@ def test_H2_implicit_grad_consistency():
 @pytest.mark.slow
 def test_H2O():
     basis = sf.BatchedBasis.from_molecule(_H2O_MOLECULE)
-    options = scf.Options.differentiable(
-        steps=20,
+    options = scf.Options(
+        max_iterations=20,
+        execution_mode=scf.ExecutionMode.FIXED,
+        integral_strategy=scf.IntegralStrategy.CACHED,
         callback=scf.CallbackOptions(
             interval=1,
             func=lambda step: print(
@@ -314,6 +333,7 @@ def test_H2O():
             ),
         ),
     )
+
     result = jit(scf.solve)(basis, options)
 
     np.testing.assert_almost_equal(
@@ -323,6 +343,34 @@ def test_H2O():
     )
     np.testing.assert_almost_equal(
         result.total_energy,
+        _EXPECTED_TOTAL_ENERGY_H2O,
+        decimal=5,
+    )
+
+
+@pytest.mark.slow
+def test_H2O_grad():
+    def total_energy(positions: jax.Array):
+        mol = _update_molecule_geometry(_H2O_MOLECULE, positions)
+
+        options = scf.Options(
+            max_iterations=20,
+            execution_mode=scf.ExecutionMode.FIXED,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+            perturbation=1e-10,
+            convergence_threshold=1e-6,
+        )
+        result = scf.solve(mol, options)
+
+        return result.total_energy
+
+    total_energy_and_grad = jit(jax.value_and_grad(total_energy))
+    positions = jnp.array([atom.position for atom in _H2O_MOLECULE.atoms])
+
+    energy, _ = total_energy_and_grad(positions)
+
+    np.testing.assert_almost_equal(
+        energy,
         _EXPECTED_TOTAL_ENERGY_H2O,
         decimal=5,
     )

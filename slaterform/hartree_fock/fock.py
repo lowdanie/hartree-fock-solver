@@ -218,13 +218,14 @@ def two_electron_matrix(
     Returns:
         The two-electron Fock matrix. Shape: (n_basis, n_basis).
     """
+    print(f"two electron matrix. num batches: {len(basis.batches_2e)}")
     n_basis = basis.n_basis
     G = jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
     batch_operator = jax.vmap(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
 
-    for batched_tuples in basis.batches_2e:
+    for i, batched_tuples in enumerate(basis.batches_2e):
         G = _process_batched_tuples(
             G,
             batched_tuples,
@@ -260,7 +261,7 @@ def two_electron_integrals(
             batched_tuples,
             jnp.asarray(basis.block_starts),
             batch_operator,
-            _integrals_step,
+            jax.checkpoint(_integrals_step),
         )
 
     return V

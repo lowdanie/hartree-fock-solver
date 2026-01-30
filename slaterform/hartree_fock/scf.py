@@ -347,6 +347,7 @@ def _two_electron_matrix(
 def scf_step(
     state: State, context: Context, options: Options, iteration: jax.Array
 ) -> State:
+    print("scf step")
     # Solve for new orbital coefficients and density.
     # C has shape (n_basis, n_basis)
     orbital_energies, C = solve_roothaan(
@@ -428,6 +429,7 @@ def _solve_convergence(context: Context, options: Options) -> SolverStep:
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
+    print("solve converged")
     step = build_initial_step(context, options)
 
     cond_fn = functools.partial(_should_continue, options=options)
@@ -444,6 +446,7 @@ def _solve_fixed(context: Context, options: Options) -> SolverStep:
     Returns:
         A Result object containing the final energy and orbital coefficients.
     """
+    print("solve fixed")
     step = build_initial_step(context, options)
 
     def scan_fn(step, _):
@@ -457,6 +460,7 @@ def _solve_fixed(context: Context, options: Options) -> SolverStep:
 
 def _solve_implicit(context: Context, options: Options) -> SolverStep:
     """Implicit differentiation solver."""
+    print("solve_implicit")
 
     # The fixed point mapping: (state, context) -> state
     def fixed_point_step(state, ctx):
