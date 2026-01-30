@@ -19,25 +19,6 @@ StepFn = Callable[[State, Params], State]
 FixedPointSolverFn = Callable[[Params], State]
 
 
-def _implicit_lhs(
-    v: State, step_fn: StepFn, state: State, params: Params
-) -> State:
-    """Computes the linear operator A(v) = (I - J_state(step)) * v."""
-    # J_state(step) * v
-    _, Jv = jax.jvp(lambda s: step_fn(s, params), (state,), (v,))
-
-    # v - Jv
-    return jax.tree.map(lambda x, y: x - y, v, Jv)
-
-
-def _implicit_rhs(
-    d_params: Params, step_fn: StepFn, state: State, params: Params
-) -> State:
-    """Computes u = J_params(step) * d_params."""
-    _, u = jax.jvp(lambda p: step_fn(state, p), (params,), (d_params,))
-    return u
-
-
 def _solve_linear_system(A, b, tol=1e-5):
     """Solves Ax=b using GMRES with flattening where A is a linear operator."""
     b_flat, unravel_fn = ravel_pytree(b)

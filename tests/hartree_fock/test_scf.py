@@ -108,15 +108,6 @@ def _build_h2_molecule(bond_length: jax.Array) -> sf.Molecule:
     )
 
 
-def _value_and_jacfwd(f):
-    def _wrapper(x):
-        val = f(x)
-        jac = jax.jacfwd(f)(x)
-        return val, jac
-
-    return _wrapper
-
-
 def test_callback_options_pytree():
     options = scf.CallbackOptions(
         interval=10,
@@ -275,7 +266,7 @@ def test_H2_implicit_gradients():
         result = scf.solve(mol, options)
         return result.total_energy
 
-    val_and_grad_fn = jit(_value_and_jacfwd(energy))
+    val_and_grad_fn = jit(jax.value_and_grad(energy))
     E, grad_E = val_and_grad_fn(1.4)
 
     np.testing.assert_almost_equal(E, _EXPECTED_TOTAL_ENERGY_H2, decimal=4)
@@ -302,7 +293,7 @@ def test_H2_implicit_grad_consistency():
         )
         return scf.solve(mol, options).total_energy
 
-    grad_implicit = jit(jax.jacfwd(energy_implicit))(bond_length)
+    grad_implicit = jit(jax.grad(energy_implicit))(bond_length)
 
     # 3. Assert they are compatible
     print(f"\nGradient Fixed:    {grad_fixed:.8f}")

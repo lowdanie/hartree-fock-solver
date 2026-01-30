@@ -1,8 +1,10 @@
 from typing import Callable, NamedTuple, Optional
 import functools
+import dataclasses
 
 import jax
 from jax import numpy as jnp
+from jax.tree_util import register_pytree_node_class
 
 from slaterform.basis.basis_block import BasisBlock
 from slaterform.basis.operators import (
@@ -21,7 +23,9 @@ _BlockOperator = Callable[
 ]
 
 
-class _GroupParams(NamedTuple):
+@register_pytree_node_class
+@dataclasses.dataclass
+class _GroupParams:
     # The stacked basis blocks for the group of batches.
     # Length: 4
     stacks: tuple[BasisBlock, ...]
@@ -37,6 +41,26 @@ class _GroupParams(NamedTuple):
     # A density matrix.
     # Shape: (n_basis, n_basis)
     P: Optional[jax.Array] = None
+
+    def tree_flatten(self):
+        children = (
+            self.stacks,
+            self.stack_starts,
+            self.P,
+        )
+        aux_data = (self.batch_operator,)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data: tuple, children: tuple) -> "_GroupParams":
+        batch_operator = aux_data[0]
+        stacks, stack_starts, P = children
+        return cls(
+            stacks=stacks,
+            stack_starts=stack_starts,
+            batch_operator=batch_operator,
+            P=P,
+        )
 
 
 class _BatchData(NamedTuple):
