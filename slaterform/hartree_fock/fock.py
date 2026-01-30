@@ -206,7 +206,7 @@ def two_electron_matrix(
             batched_tuples,
             jnp.asarray(basis.block_starts),
             batch_operator,
-            _matrix_step,
+            jax.checkpoint(_matrix_step),
             P,
         )
 

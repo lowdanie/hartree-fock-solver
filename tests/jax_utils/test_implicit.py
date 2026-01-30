@@ -24,9 +24,9 @@ def test_scalar_fixed_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_jvp(scalar_step, fake_solver)
+    implicit_solver = implicit.attach_implicit_grad(scalar_step, fake_solver)
 
-    grad_fn = jax.jacfwd(implicit_solver)
+    grad_fn = jax.grad(implicit_solver)
     grad = grad_fn(p_val)
     np.testing.assert_allclose(grad, expected_grad, rtol=1e-5, atol=1e-8)
 
@@ -44,16 +44,14 @@ def test_scalar_with_aux_fixed_point():
     def fake_solver(p):
         return expected_x, expected_aux
 
-    implicit_solver = implicit.attach_implicit_jvp(
+    implicit_solver = implicit.attach_implicit_grad(
         scalar_step, fake_solver, has_aux=True
     )
 
-    x, aux = implicit_solver(p_val)
-    np.testing.assert_allclose(x, expected_x, rtol=1e-5, atol=1e-8)
-    np.testing.assert_allclose(aux, expected_aux, rtol=1e-5, atol=1e-8)
+    grad_fn = jax.value_and_grad(implicit_solver, has_aux=True)
+    (x, aux), grad = grad_fn(p_val)
 
-    grad_fn = jax.jacfwd(implicit_solver, has_aux=True)
-    grad, aux = grad_fn(p_val)
+    np.testing.assert_allclose(x, expected_x, rtol=1e-5, atol=1e-8)
     np.testing.assert_allclose(aux, expected_aux, rtol=1e-5, atol=1e-8)
     np.testing.assert_allclose(grad, expected_grad, rtol=1e-5, atol=1e-8)
 
@@ -71,8 +69,8 @@ def test_pytree_fixed_point():
     def fake_solver(p):
         return expected_tree
 
-    implicit_solver = implicit.attach_implicit_jvp(tree_step, fake_solver)
-    grad_fn = jax.jacfwd(implicit_solver)
+    implicit_solver = implicit.attach_implicit_grad(tree_step, fake_solver)
+    grad_fn = jax.jacrev(implicit_solver)
     grad = grad_fn(p_val)
 
     np.testing.assert_allclose(
@@ -102,9 +100,9 @@ def test_scalar_nonlinear_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_jvp(scalar_step, fake_solver)
+    implicit_solver = implicit.attach_implicit_grad(scalar_step, fake_solver)
 
-    grad_fn = jax.jacfwd(implicit_solver)
+    grad_fn = jax.grad(implicit_solver)
     grad = grad_fn(p_val)
     np.testing.assert_allclose(grad, expected_grad, rtol=1e-5, atol=1e-8)
 
@@ -125,9 +123,9 @@ def test_vector_fixed_point():
     def fake_solver(p):
         return expected_x
 
-    implicit_solver = implicit.attach_implicit_jvp(vector_step, fake_solver)
+    implicit_solver = implicit.attach_implicit_grad(vector_step, fake_solver)
 
-    grad_fn = jax.jacfwd(implicit_solver)
+    grad_fn = jax.jacrev(implicit_solver)
     jacobian = grad_fn(p)
     np.testing.assert_allclose(
         jacobian, expected_jacobian, rtol=1e-5, atol=1e-8

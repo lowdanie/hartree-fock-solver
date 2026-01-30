@@ -24,7 +24,7 @@ from slaterform.hartree_fock.roothaan import (
     orthogonalize_basis,
     solve as solve_roothaan,
 )
-from slaterform.jax_utils.implicit import attach_implicit_jvp
+from slaterform.jax_utils.implicit import attach_implicit_grad
 from slaterform.structure.batched_basis import BatchedBasis
 from slaterform.structure.molecule import Molecule
 from slaterform.structure.nuclear import (
@@ -344,7 +344,6 @@ def _two_electron_matrix(
     return G
 
 
-@jax.checkpoint
 def scf_step(
     state: State, context: Context, options: Options, iteration: jax.Array
 ) -> State:
@@ -468,7 +467,7 @@ def _solve_implicit(context: Context, options: Options) -> SolverStep:
         step = _solve_convergence(ctx, options)
         return step.state, step.iteration
 
-    solve_fn = attach_implicit_jvp(
+    solve_fn = attach_implicit_grad(
         fixed_point_step, primal_solver, has_aux=True
     )
 

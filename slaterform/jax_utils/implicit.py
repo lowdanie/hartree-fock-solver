@@ -38,7 +38,23 @@ def _implicit_rhs(
     return u
 
 
-def attach_implicit_jvp(
+def _solve_linear_system(A, b, tol=1e-5):
+    """Solves Ax=b using GMRES with flattening where A is a linear operator."""
+    b_flat, unravel_fn = ravel_pytree(b)
+    # Initial guess = zero with correct pytree structure
+    x0_flat = b_flat - b_flat
+
+    def A_flat(v_flat):
+        v = unravel_fn(v_flat)
+        Av = A(v)
+        Av_flat, _ = ravel_pytree(Av)
+        return Av_flat
+
+    x_flat, _ = gmres(A_flat, b_flat, x0=x0_flat, tol=tol)
+    return unravel_fn(x_flat)
+
+
+def attach_implicit_grad(
     step_fn: StepFn,
     solver_fn: FixedPointSolverFn,
     has_aux: bool = False,
@@ -47,13 +63,21 @@ def attach_implicit_jvp(
     Wraps a non-differentiable solver with implicit differentiation.
 
     Formula:
-    (I - J_state(step)) * d_state = J_params(step) * d_params
+    d_state^T * J_params(solver) = d_state^T * (I - J_state(step))^-1 * J_params(step)
 
     Where:
-       d_params       = Incoming tangent w.r.t params
-       d_state        = J_params(solve) * d_params  (The total derivative we want)
-       J_state(step)  = Partial derivative of step_fn w.r.t state
-       J_params(step) = Partial derivative of step_fn w.r.t params
+       J_params(solver) = Partial derivative of solver_fn w.r.t state
+       J_state(step)   = Partial derivative of step_fn w.r.t state
+       J_params(step)  = Partial derivative of step_fn w.r.t params
+
+    We solve for d_state^T * J_params(solver) in two steps:
+
+    1. Solve the adjoint system for u:
+         (I - J_state(step))^T * u = d_state
+    2. Compute gradients w.r.t params:
+         d_params = J_params(step)^T * u
+
+    We denote J_params(step) and J_state(step) by J_params and J_state respectively.
 
     Args:
         solver_fn: Function that computes the fixed point (the primal pass).
@@ -66,42 +90,42 @@ def attach_implicit_jvp(
                    The aux data is not differentiated through.
     """
 
-    @jax.custom_jvp
+    @jax.custom_vjp
     def _solve(params):
         return solver_fn(params)
 
-    @_solve.defjvp
-    def _solve_jvp(primals, tangents):
-        params = primals[0]
-        d_params = tangents[0]
-
-        # Compute the fixed point state.
+    def _solve_fwd(params):
         out_primals = solver_fn(params)
+        if has_aux:
+            state, _ = out_primals
+        else:
+            state = out_primals
+        return out_primals, (state, params)
+
+    def _solve_bwd(residuals, cotangents):
+        state, params = residuals
 
         if has_aux:
-            state_star, aux = out_primals
-            _, d_aux = jax.jvp(lambda _: aux, (0.0,), (0.0,))
+            d_state, _ = cotangents  # Ignore gradient w.r.t aux
         else:
-            state_star = out_primals
+            d_state = cotangents
 
-        # RHS Vector: u = J_params(step) * d_params
-        u = _implicit_rhs(d_params, step_fn, state_star, params)
-        u_flat, unravel_fn = ravel_pytree(u)
+        # 1. Solve the adjoint system for lambda.
+        # A(v) = (I - J_state(step))^T * v
+        def A(v):
+            _, vjp_fun = jax.vjp(lambda s: step_fn(s, params), state)
+            jt_v = vjp_fun(v)[0]
+            return jax.tree.map(lambda x, y: x - y, v, jt_v)
 
-        # LHS Operator: v -> (I - J_state(step)) * v
-        def matvec_flat(v_flat):
-            v = unravel_fn(v_flat)
-            Av = _implicit_lhs(v, step_fn, state_star, params)
-            Av_flat, _ = ravel_pytree(Av)
-            return Av_flat
+        u = _solve_linear_system(A, d_state)
 
-        # Solve: A * d_state = u
-        d_state_star_flat, _ = gmres(matvec_flat, u_flat, tol=1e-5)
-        d_state_star = unravel_fn(d_state_star_flat)
+        # 2. Compute gradients w.r.t params:
+        # d_params = J_params(step)^T * u
+        _, vjp_fun_params = jax.vjp(lambda p: step_fn(state, p), params)
+        d_params = vjp_fun_params(u)[0]
 
-        if has_aux:
-            return (state_star, aux), (d_state_star, d_aux)
-        else:
-            return state_star, d_state_star
+        return (d_params,)
+
+    _solve.defvjp(_solve_fwd, _solve_bwd)
 
     return _solve
