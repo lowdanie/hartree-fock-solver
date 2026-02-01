@@ -5,8 +5,12 @@ from jax import jit
 from jax import numpy as jnp
 import numpy as np
 
+import pubchempy as pcp
+
 import slaterform as sf
 import slaterform.hartree_fock.scf as scf
+
+from slaterform.hartree_fock.fock import two_electron_integrals
 from tests.jax_utils import pytree_utils
 
 _H_SHELLS = sf.adapters.bse.load("sto-3g", 1)
@@ -250,6 +254,17 @@ def test_H2_from_molecule():
     )
 
 
+def test_H2_compile_only():
+    options = scf.Options(
+        max_iterations=20,
+        execution_mode=scf.ExecutionMode.FIXED,
+        integral_strategy=scf.IntegralStrategy.CACHED,
+    )
+
+    lowered = jit(scf.solve).lower(_H2_MOLECULE, options)
+    lowered.compile()
+
+
 def test_H2_gradients():
     def energy(bond_length: jax.Array) -> jax.Array:
         mol = _build_h2_molecule(bond_length)
@@ -374,3 +389,45 @@ def test_H2O_grad():
         _EXPECTED_TOTAL_ENERGY_H2O,
         decimal=5,
     )
+
+
+@pytest.mark.slow
+def test_aspirin_memory_analysis():
+    batch_size = 1024
+    compute_grad = True
+    print("Experiment:")
+    print("Molecule: Aspirin")
+    print("Batch size 2e: ", batch_size)
+    print("With grad: ", compute_grad)
+
+    compounds = pcp.get_compounds("Aspirin", "name", record_type="3d")
+    atoms = sf.adapters.pubchem.load_geometry(compounds[0])
+    molecule = sf.Molecule.from_geometry(atoms, basis_name="sto-3g")
+
+    def total_energy(positions: jax.Array):
+        mol = _update_molecule_geometry(molecule, positions)
+        basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
+        options = scf.Options(
+            max_iterations=20,
+            execution_mode=scf.ExecutionMode.FIXED,
+            integral_strategy=scf.IntegralStrategy.CACHED,
+            perturbation=1e-10,
+            convergence_threshold=1e-6,
+        )
+        result = scf.solve(basis, options)
+
+        return result.total_energy
+
+    positions = jnp.array([atom.position for atom in molecule.atoms])
+
+    print("Running...")
+    if compute_grad:
+        value_and_grad_fn = jit(jax.value_and_grad(total_energy))
+    else:
+        value_and_grad_fn = jit(total_energy)
+
+    lowered = value_and_grad_fn.lower(positions)
+    compiled = lowered.compile()
+    mem_analysis = compiled.memory_analysis()
+
+    print(f"Temp Heap Size: {mem_analysis.temp_size_in_bytes / 1024**2:.2f} MB")

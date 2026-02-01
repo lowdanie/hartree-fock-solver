@@ -225,7 +225,7 @@ def two_electron_matrix(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
 
-    for i, batched_tuples in enumerate(basis.batches_2e):
+    for batched_tuples in basis.batches_2e:
         G = _process_batched_tuples(
             G,
             batched_tuples,
