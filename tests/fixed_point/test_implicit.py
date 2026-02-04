@@ -4,7 +4,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from slaterform.jax_utils import implicit
+from slaterform.fixed_point import implicit
 
 
 class FakeTree(NamedTuple):

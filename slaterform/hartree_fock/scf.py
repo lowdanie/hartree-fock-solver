@@ -24,7 +24,7 @@ from slaterform.hartree_fock.roothaan import (
     orthogonalize_basis,
     solve as solve_roothaan,
 )
-from slaterform.jax_utils.implicit import attach_implicit_grad
+from slaterform.fixed_point.implicit import attach_implicit_grad
 from slaterform.structure.batched_basis import BatchedBasis
 from slaterform.structure.molecule import Molecule
 from slaterform.structure.nuclear import (
