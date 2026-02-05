@@ -8,19 +8,37 @@ from jax.tree_util import register_pytree_node_class
 from typing import Callable, Optional
 
 from slaterform import types
+from slaterform.fixed_point.fixed_point import SolverStatus
+from slaterform.fixed_point.fixed_point import run as fixed_point_run
 
 
-class AndersonState(NamedTuple):
+@register_pytree_node_class
+@dataclasses.dataclass
+class AndersonState:
     k: jax.Array  # Current iteration
     x_curr: jax.Array  # Current estimate. Shape: arbitrary
     fx_curr: jax.Array  # f(x_curr). Shape: x_curr.shape
     X_hist: jax.Array  # History of x values. Shape: (m x x0.size)
     F_hist: jax.Array  # History of f(x) values. Shape: (m x x0.size)
 
+    def tree_flatten(self):
+        children = (
+            self.k,
+            self.x_curr,
+            self.fx_curr,
+            self.X_hist,
+            self.F_hist,
+        )
+        aux_data = None
+        return children, aux_data
 
-class AndersonCallbackArgs(NamedTuple):
-    iteration: jax.Array
-    err: jax.Array
+    @classmethod
+    def tree_unflatten(
+        cls,
+        aux_data: None,
+        children: tuple,
+    ) -> "AndersonState":
+        return cls(*children)
 
 
 @register_pytree_node_class
@@ -32,7 +50,7 @@ class AndersonParams:
     tol: types.Scalar = 1e-05  # Convergence tolerance
     beta: types.Scalar = 1.0  # Mixing dampener
     static_loop: bool = False  # If True, use a fixed number of iterations
-    callback: Optional[Callable[[AndersonCallbackArgs], None]] = None
+    callback: Optional[Callable[[SolverStatus], None]] = None
 
     def __post_init__(self):
         types.promote_dataclass_fields(self)
@@ -62,8 +80,8 @@ class AndersonParams:
 
 
 def _step(
-    state: AndersonState,
     f: Callable[[jax.Array], jax.Array],
+    state: AndersonState,
     params: AndersonParams,
 ) -> AndersonState:
     m = params.m
@@ -126,45 +144,11 @@ def _step(
     return AndersonState(state.k + 1, x_next, fx_next, X_hist, F_hist)
 
 
-def _step_with_callback(
-    state: AndersonState,
-    f: Callable[[jax.Array], jax.Array],
-    params: AndersonParams,
-) -> AndersonState:
-    new_state = _step(state, f, params)
-    if params.callback is not None:
-        args = AndersonCallbackArgs(
-            iteration=new_state.k,
-            err=jnp.linalg.norm(new_state.fx_curr - new_state.x_curr),
-        )
-        jax.debug.callback(params.callback, args)
-    return new_state
-
-
-def _should_continue(
-    state: AndersonState,
-    params: AndersonParams,
-) -> jax.Array:
-    tol_sq = jnp.square(params.tol)
-    err_sq = jnp.sum(jnp.square(state.fx_curr - state.x_curr))
-    return jnp.logical_and((err_sq > tol_sq), (state.k < params.max_iter))
-
-
-def _scan_fn(
-    carry: AndersonState,
-    _: None,
-    f: Callable[[jax.Array], jax.Array],
-    params: AndersonParams,
-) -> tuple[AndersonState, None]:
-    new_carry = _step_with_callback(carry, f, params)
-    return new_carry, None
-
-
 def solve(
     f: Callable[[jax.Array], jax.Array],
     x0: jax.Array,
     params: AndersonParams,
-) -> jax.Array:
+) -> tuple[jax.Array, SolverStatus]:
     """
     A JIT-compatible Anderson fixed point solver.
 
@@ -184,12 +168,9 @@ def solve(
         F_hist=jnp.zeros((m, size), dtype=x0.dtype),
     )
 
-    if params.static_loop:
-        scan_fn = functools.partial(_scan_fn, f=f, params=params)
-        state, _ = jax.lax.scan(scan_fn, init_state, length=params.max_iter)
-    else:
-        cond_fn = functools.partial(_should_continue, params=params)
-        step_fn = functools.partial(_step_with_callback, f=f, params=params)
-        state = jax.lax.while_loop(cond_fn, step_fn, init_state)
+    step_fn = functools.partial(_step, f)
+    final_state, final_status = fixed_point_run(
+        step_fn=step_fn, init_state=init_state, params=params
+    )
 
-    return state.x_curr
+    return final_state.x_curr, final_status

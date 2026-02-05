@@ -9,6 +9,12 @@ from slaterform import types
 class SolverStatus(NamedTuple):
     iteration: jax.Array
     err: jax.Array
+    converged: bool
+
+
+class SolverResult(NamedTuple):
+    x: jax.Array
+    status: SolverStatus
 
 
 class SolverState(Protocol):
@@ -28,6 +34,14 @@ S = TypeVar("S", bound=SolverState)
 P = TypeVar("P", bound=SolverParams)
 
 
+def _get_solver_status(
+    state: SolverState, params: SolverParams
+) -> SolverStatus:
+    err = jnp.linalg.norm(state.fx_curr - state.x_curr)
+    converged = err < params.tol
+    return SolverStatus(iteration=state.k, err=err, converged=converged)
+
+
 def _should_continue(state: SolverState, params: SolverParams) -> jax.Array:
     """Generic convergence check: ||f(x) - x|| > tol."""
     tol_sq = jnp.square(params.tol)
@@ -39,8 +53,7 @@ def _step_wrapper(state: S, step_fn: Callable[[S, P], S], params: P) -> S:
     new_state = step_fn(state, params)
 
     if params.callback is not None:
-        err = jnp.linalg.norm(new_state.fx_curr - new_state.x_curr)
-        status = SolverStatus(iteration=new_state.k, err=err)
+        status = _get_solver_status(new_state, params)
         jax.debug.callback(params.callback, status)
 
     return new_state
@@ -57,7 +70,7 @@ def run(
     step_fn: Callable[[S, P], S],
     init_state: S,
     params: P,
-) -> S:
+) -> tuple[S, SolverStatus]:
     """
     Executes the fixed point loop (While or Scan).
 
@@ -79,4 +92,5 @@ def run(
         cond_fn = functools.partial(_should_continue, params=params)
         final_state = jax.lax.while_loop(cond_fn, step_wrapper, init_state)
 
-    return final_state
+    final_status = _get_solver_status(final_state, params)
+    return final_state, final_status

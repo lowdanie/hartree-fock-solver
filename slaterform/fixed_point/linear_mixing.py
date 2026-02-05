@@ -97,7 +97,7 @@ def solve(
     f: Callable[[jax.Array], jax.Array],
     x0: jax.Array,
     params: LinearMixingParams,
-) -> jax.Array:
+) -> tuple[jax.Array, SolverStatus]:
     """
     Solves the fixed point equation x = f(x) using linear mixing.
 
@@ -118,8 +118,8 @@ def solve(
     )
 
     step_fn = functools.partial(_step, f)
-    final_state = fixed_point_run(
+    final_state, final_status = fixed_point_run(
         step_fn=step_fn, init_state=init_state, params=params
     )
 
-    return final_state.x_curr
+    return final_state.x_curr, final_status

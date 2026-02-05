@@ -9,6 +9,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from slaterform.fixed_point import anderson
+from slaterform.fixed_point import fixed_point
 
 
 @dataclasses.dataclass
@@ -18,8 +19,8 @@ class _TestCase:
     params: anderson.AndersonParams
 
 
-def _logger(args: anderson.AndersonCallbackArgs):
-    print("Iteration", args.iteration, "Error", args.err)
+def _logger(status: fixed_point.SolverStatus):
+    print("Iteration", status.iteration, "Error", status.err)
 
 
 def newton_step(x, p):
@@ -114,9 +115,11 @@ def test_solve(case: _TestCase):
         f=case.f,
         params=case.params,
     )
-    x = jax.jit(solver_fn)(
+    x, status = jax.jit(solver_fn)(
         x0=case.x0,
     )
+
+    assert status.converged
     err = jnp.linalg.norm(case.f(x) - x)
     assert err < case.params.tol
 
@@ -127,11 +130,12 @@ def test_solve_with_grad():
     )
 
     def anderson_sqrt(p):
-        return anderson.solve(
+        x, _ = anderson.solve(
             f=lambda x: newton_step(x, p),
             x0=jnp.asarray(1.0),
             params=params,
         )
+        return x
 
     p_val = 2.0
     expected_val = jnp.sqrt(p_val)
