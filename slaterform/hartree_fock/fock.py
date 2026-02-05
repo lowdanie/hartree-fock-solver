@@ -218,7 +218,6 @@ def two_electron_matrix(
     Returns:
         The two-electron Fock matrix. Shape: (n_basis, n_basis).
     """
-    print(f"two electron matrix. num batches: {len(basis.batches_2e)}")
     n_basis = basis.n_basis
     G = jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
     batch_operator = jax.vmap(

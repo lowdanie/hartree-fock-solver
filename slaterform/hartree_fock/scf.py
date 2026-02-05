@@ -9,6 +9,13 @@ from jax.tree_util import register_pytree_node_class
 
 
 import slaterform.types as types
+
+from slaterform.fixed_point.fixed_point import SolverStatus
+from slaterform.fixed_point.anderson import AndersonParams
+from slaterform.fixed_point.anderson import solve as anderson_solve
+from slaterform.fixed_point.linear_mixing import LinearMixingParams
+from slaterform.fixed_point.linear_mixing import solve as lm_solve
+
 from slaterform.hartree_fock.density import closed_shell_matrix
 from slaterform.hartree_fock.fock import (
     two_electron_matrix,
@@ -31,109 +38,44 @@ from slaterform.structure.nuclear import (
     repulsion_energy as nuclear_repulsion_energy,
 )
 
-SolverCallback = Callable[["SolverStep"], None]
-
 
 class IntegralStrategy(enum.IntEnum):
     DIRECT = 0  # Re-computes integrals every step.
     CACHED = 1  # Pre-computes O(N^4) tensor once.
 
 
-class ExecutionMode(enum.IntEnum):
-    # Runs until convergence. Not differentiable.
-    CONVERGENCE = 0
-
-    # Runs for a fixed number of iterations. Differentiable.
-    FIXED = 1
-
-    # Runs until convergence and is forward differentiable
-    # via implicit differentiation.
-    IMPLICIT = 2
-
-
-@register_pytree_node_class
-@dataclasses.dataclass
-class CallbackOptions:
-    interval: types.IntScalar = 10
-    func: Optional[SolverCallback] = None
-
-    def __post_init__(self):
-        if isinstance(self.interval, int):
-            if self.interval < 1:
-                raise ValueError("callback_interval must be >= 1")
-        types.promote_dataclass_fields(self)
-
-    def tree_flatten(self):
-        children = (self.interval,)
-        aux_data = (self.func,)
-        return children, aux_data
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(
-            interval=children[0],
-            func=aux_data[0],
-        )
+SolverParams = AndersonParams | LinearMixingParams
 
 
 @register_pytree_node_class
 @dataclasses.dataclass
 class Options:
-    max_iterations: int = 50  # Acts as 'n_steps' in FIXED mode
-    execution_mode: ExecutionMode = ExecutionMode.CONVERGENCE
+    solver: SolverParams = dataclasses.field(default_factory=LinearMixingParams)
     integral_strategy: IntegralStrategy = IntegralStrategy.CACHED
-
-    convergence_threshold: types.Scalar = 1e-6
-    perturbation: types.Scalar = 0.0
-
-    # Damping factor [0.0, 1.0).
-    # 0.0 means no damping (use 100% new density).
-    damping: types.Scalar = 0.0
-
-    callback: CallbackOptions = dataclasses.field(
-        default_factory=CallbackOptions
-    )
+    perturbation: types.Scalar = 1e-10
+    implicit_diff: bool = False
 
     def __post_init__(self):
         types.promote_dataclass_fields(self)
 
     def tree_flatten(self):
-        children = (
-            self.convergence_threshold,
-            self.perturbation,
-            self.damping,
-            self.callback,
-        )
+        children = (self.perturbation,)
         aux_data = (
-            self.max_iterations,
-            self.execution_mode,
+            self.solver,
             self.integral_strategy,
+            self.implicit_diff,
         )
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
+        solver, integral_strategy, implicit_diff = aux_data
+        perturbation = children[0]
         return cls(
-            max_iterations=aux_data[0],
-            execution_mode=aux_data[1],
-            integral_strategy=aux_data[2],
-            convergence_threshold=children[0],
-            perturbation=children[1],
-            damping=children[2],
-            callback=children[3],
-        )
-
-    @classmethod
-    def differentiable(
-        cls, steps=25, callback: CallbackOptions = CallbackOptions()
-    ) -> "Options":
-        """Helper for differentiable optimization."""
-        return cls(
-            max_iterations=steps,
-            execution_mode=ExecutionMode.FIXED,
-            integral_strategy=IntegralStrategy.CACHED,
-            perturbation=1e-10,  # Safety for gradients
-            callback=callback,
+            solver=solver,
+            integral_strategy=integral_strategy,
+            perturbation=perturbation,
+            implicit_diff=implicit_diff,
         )
 
 
@@ -173,50 +115,6 @@ class Context:
     @classmethod
     def tree_unflatten(cls, aux_data, children):
         return cls(*children)
-
-
-@register_pytree_node_class
-@dataclasses.dataclass
-class State:
-    # Molecular orbital coefficients matrix. shape (n_basis, n_basis)
-    C: jax.Array
-
-    # Closed shell density matrix. shape (n_basis, n_basis)
-    P: jax.Array
-
-    # Fock matrix. shape (n_basis, n_basis)
-    F: jax.Array
-
-    electronic_energy: jax.Array
-    total_energy: jax.Array
-
-    # Fock matrix eigenvalues. shape (n_basis, )
-    orbital_energies: jax.Array
-
-    # Change in density matrix. ||P_new - P_old||^2
-    delta_P_sq: jax.Array
-
-    def tree_flatten(self):
-        children = (
-            self.C,
-            self.P,
-            self.F,
-            self.electronic_energy,
-            self.total_energy,
-            self.orbital_energies,
-            self.delta_P_sq,
-        )
-        aux_data = None
-        return children, aux_data
-
-    @classmethod
-    def tree_unflatten(cls, aux_data, children):
-        return cls(*children)
-
-
-class SolverStep(NamedTuple):
-    state: State
-    iteration: jax.Array
 
 
 @register_pytree_node_class
@@ -283,48 +181,9 @@ def build_context(basis: BatchedBasis, options: Options) -> Context:
     )
 
 
-def build_initial_state(context: Context, options: Options) -> State:
+def build_initial_density(context: Context) -> jax.Array:
     n_basis = context.basis.n_basis
-
-    conv_thresh_sq = jnp.square(options.convergence_threshold)
-
-    return State(
-        C=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
-        P=jnp.zeros((n_basis, n_basis), dtype=jnp.float64),
-        F=context.H_core,
-        electronic_energy=jnp.asarray(0.0, dtype=jnp.float64),
-        total_energy=context.nuclear_energy,
-        orbital_energies=jnp.zeros(n_basis, dtype=jnp.float64),
-        delta_P_sq=jnp.array(conv_thresh_sq + 1.0, dtype=jnp.float64),
-    )
-
-
-def build_initial_step(context: Context, options: Options) -> SolverStep:
-    return SolverStep(
-        state=build_initial_state(context, options),
-        iteration=jnp.array(0, dtype=jnp.int32),
-    )
-
-
-def _is_converged(step: SolverStep, options: Options) -> jax.Array:
-    return step.state.delta_P_sq <= jnp.square(options.convergence_threshold)
-
-
-def build_result(
-    step: SolverStep, context: Context, options: Options
-) -> Result:
-    state = step.state
-    return Result(
-        converged=_is_converged(step, options),
-        iterations=step.iteration,
-        electronic_energy=state.electronic_energy,
-        nuclear_energy=context.nuclear_energy,
-        total_energy=state.total_energy,
-        basis=context.basis,
-        orbital_energies=state.orbital_energies,
-        orbitals=state.C,
-        density=state.P,
-    )
+    return jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
 
 
 def _two_electron_matrix(
@@ -344,36 +203,42 @@ def _two_electron_matrix(
     return G
 
 
-def scf_step(
-    state: State, context: Context, options: Options, iteration: jax.Array
-) -> State:
-    # Solve for new orbital coefficients and density.
-    # C has shape (n_basis, n_basis)
-    orbital_energies, C = solve_roothaan(
-        state.F, context.X, options.perturbation
-    )
-    # shape (n_basis, n_basis)
-    P_new = closed_shell_matrix(C, context.basis.n_electrons)
-
-    # Damping.
-    alpha = jax.lax.select(iteration > 0, options.damping, 0.0)
-    P = (1.0 - alpha) * P_new + alpha * state.P
-
-    # Compute the Fock matrix and energy for the new density P.
-    # shape (n_basis, n_basis)
+def _fock_diagonalize(
+    P: jax.Array, context: Context, options: Options
+) -> tuple[jax.Array, jax.Array, jax.Array]:
+    """
+    Performs the core SCF physics: P -> G -> F -> (C, epsilon).
+    Returns (F, C, orbital_energies).
+    """
     G = _two_electron_matrix(P, context, options)
-    F = context.H_core + G  # shape (n_basis, n_basis)
-    electronic_energy_val = electronic_energy(context.H_core, F, P)
+    F = context.H_core + G
+    orbital_energies, C = solve_roothaan(F, context.X, options.perturbation)
 
-    return State(
-        C=C,
-        P=P,
-        F=F,
+    return F, C, orbital_energies
+
+
+def build_result(
+    P: jax.Array, status: SolverStatus, context: Context, options: Options
+) -> Result:
+    F, C, orbital_energies = _fock_diagonalize(P, context, options)
+    electronic_energy_val = electronic_energy(context.H_core, F, P)
+    total_energy = electronic_energy_val + context.nuclear_energy
+    return Result(
+        converged=jnp.asarray(status.converged),
+        iterations=jnp.asarray(status.iteration),
         electronic_energy=electronic_energy_val,
-        total_energy=electronic_energy_val + context.nuclear_energy,
+        nuclear_energy=context.nuclear_energy,
+        total_energy=total_energy,
+        basis=context.basis,
         orbital_energies=orbital_energies,
-        delta_P_sq=jnp.sum(jnp.square(P - state.P)),
+        orbitals=C,
+        density=P,
     )
+
+
+def scf_step(P: jax.Array, context: Context, options: Options) -> jax.Array:
+    _, C, _ = _fock_diagonalize(P, context, options)
+    return closed_shell_matrix(C, context.basis.n_electrons)
 
 
 def _build_basis(
@@ -389,90 +254,39 @@ def _build_basis(
         )
 
 
-def _should_continue(step: SolverStep, options: Options) -> jax.Array:
-    return jnp.logical_and(
-        jnp.logical_not(_is_converged(step, options)),
-        step.iteration < options.max_iterations,
-    )
+def _solve(
+    P0: jax.Array, context: Context, options: Options
+) -> tuple[jax.Array, SolverStatus]:
+    def step(P: jax.Array) -> jax.Array:
+        """The fixed point mapping: P -> P"""
+        return scf_step(P, context, options)
+
+    if isinstance(options.solver, AndersonParams):
+        return anderson_solve(step, P0, options.solver)
+    elif isinstance(options.solver, LinearMixingParams):
+        return lm_solve(step, P0, options.solver)
+    else:
+        raise ValueError(f"Unknown solver params type: {type(options.solver)}")
 
 
-def _maybe_run_callback(step: SolverStep, options: CallbackOptions) -> None:
-    if options.func is None:
-        return
-
-    should_run = step.iteration % options.interval == 0
-
-    def run_callback():
-        jax.debug.callback(options.func, step)
-
-    def noop_callback():
-        return None
-
-    jax.lax.cond(should_run, run_callback, noop_callback)
-
-
-def _perform_step(
-    step: SolverStep, context: Context, options: Options
-) -> SolverStep:
-    state = scf_step(step.state, context, options, step.iteration)
-    step = SolverStep(state=state, iteration=step.iteration + 1)
-    _maybe_run_callback(step, options.callback)
-
-    return step
-
-
-def _solve_convergence(context: Context, options: Options) -> SolverStep:
-    """Performs the self-consistent field (SCF) procedure to compute the
-    molecular orbital coefficients and energy.
-
-    Returns:
-        A Result object containing the final energy and orbital coefficients.
-    """
-    step = build_initial_step(context, options)
-
-    cond_fn = functools.partial(_should_continue, options=options)
-    step_fn = functools.partial(_perform_step, context=context, options=options)
-    step = jax.lax.while_loop(cond_fn, step_fn, step)
-
-    return step
-
-
-def _solve_fixed(context: Context, options: Options) -> SolverStep:
-    """Performs the self-consistent field (SCF) procedure to compute the
-    molecular orbital coefficients and energy.
-
-    Returns:
-        A Result object containing the final energy and orbital coefficients.
-    """
-    step = build_initial_step(context, options)
-
-    def scan_fn(step, _):
-        step = _perform_step(step, context, options)
-        return step, None
-
-    step, _ = jax.lax.scan(scan_fn, step, None, length=options.max_iterations)
-
-    return step
-
-
-def _solve_implicit(context: Context, options: Options) -> SolverStep:
+def _solve_implicit(
+    P0: jax.Array, context: Context, options: Options
+) -> tuple[jax.Array, SolverStatus]:
     """Implicit differentiation solver."""
 
-    # The fixed point mapping: (state, context) -> state
-    def fixed_point_step(state, ctx):
-        return scf_step(state, ctx, options, iteration=jnp.asarray(0))
+    def fixed_point_step(P, ctx):
+        """The fixed point mapping: (P, context) -> P"""
+        return scf_step(P, ctx, options)
 
-    # The primal solver. context -> (state, aux)
     def primal_solver(ctx):
-        step = _solve_convergence(ctx, options)
-        return step.state, step.iteration
+        """The primal solver. context -> (P, aux)"""
+        return _solve(P0, ctx, options)
 
     solve_fn = attach_implicit_grad(
         fixed_point_step, primal_solver, has_aux=True
     )
 
-    state, iteration = solve_fn(context)
-    return SolverStep(state=state, iteration=iteration)
+    return solve_fn(context)
 
 
 def solve(
@@ -486,15 +300,11 @@ def solve(
     """
     basis = _build_basis(system)
     context = build_context(basis, options)
-    step: SolverStep
+    P0 = build_initial_density(context)
 
-    if options.execution_mode == ExecutionMode.CONVERGENCE:
-        step = _solve_convergence(context, options)
-    elif options.execution_mode == ExecutionMode.FIXED:
-        step = _solve_fixed(context, options)
-    elif options.execution_mode == ExecutionMode.IMPLICIT:
-        step = _solve_implicit(context, options)
+    if options.implicit_diff:
+        P, status = _solve_implicit(P0, context, options)
     else:
-        raise ValueError(f"Unknown execution mode: {options.execution_mode}")
+        P, status = _solve(P0, context, options)
 
-    return build_result(step, context, options)
+    return build_result(P, status, context, options)

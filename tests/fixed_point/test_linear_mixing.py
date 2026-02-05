@@ -11,6 +11,8 @@ import numpy as np
 from slaterform.fixed_point import linear_mixing
 from slaterform.fixed_point import fixed_point
 
+from tests.jax_utils import pytree_utils
+
 
 @dataclasses.dataclass
 class _TestCase:
@@ -28,26 +30,35 @@ def newton_step(x, p):
     return 0.5 * (x + p / x)
 
 
-def build_linear_step(dim=10):
-    key = jax.random.PRNGKey(42)
-    k1, k2 = jax.random.split(key, 2)
-
-    # Generate a symmetric positive definite matrix A
-    M = jax.random.normal(k1, (dim, dim))
-    A = M.T @ M + 0.1 * jnp.eye(dim)
-
-    # Generate a random target b
-    b = jax.random.normal(k2, (dim,))
-
-    # Define the fixed point function. Choose alpha to ensure stability.
-    eigenvalues = jnp.linalg.eigvalsh(A)
-    max_eig = jnp.max(eigenvalues)
-    alpha = 1.0 / max_eig
+def build_linear_step():
+    A = jnp.array([[2.0, 1.0], [1.0, 2.0]])
+    b = jnp.array([1.0, 0.0])
+    alpha = 0.2
 
     def f(x):
         return x - alpha * (A @ x - b)
 
     return f
+
+
+def test_linear_mixing_state_pytree():
+    state = linear_mixing.LinearMixingState(
+        k=jnp.array(5),
+        x_curr=jnp.array([1.0, 2.0, 3.0]),
+        fx_curr=jnp.array([4.0, 5.0, 6.0]),
+    )
+    pytree_utils.assert_valid_pytree(state)
+
+
+def test_linear_mixing_params_pytree():
+    params = linear_mixing.LinearMixingParams(
+        max_iter=50,
+        tol=1e-6,
+        damping=0.2,
+        static_loop=True,
+        callback=_logger,
+    )
+    pytree_utils.assert_valid_pytree(params)
 
 
 @pytest.mark.parametrize(
@@ -91,7 +102,7 @@ def build_linear_step(dim=10):
             ),
         ),
         _TestCase(
-            f=build_linear_step(dim=2),
+            f=build_linear_step(),
             x0=jnp.zeros((2,)),
             params=linear_mixing.LinearMixingParams(
                 tol=1e-4,

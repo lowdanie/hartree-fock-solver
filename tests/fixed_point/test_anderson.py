@@ -11,6 +11,8 @@ import numpy as np
 from slaterform.fixed_point import anderson
 from slaterform.fixed_point import fixed_point
 
+from tests.jax_utils import pytree_utils
+
 
 @dataclasses.dataclass
 class _TestCase:
@@ -55,6 +57,29 @@ def get_linear_test_case(dim=10):
         callback=_logger,
     )
     return _TestCase(f=f, x0=jnp.zeros((dim,)), params=params)
+
+
+def test_anderson_state_pytree():
+    state = anderson.AndersonState(
+        k=jnp.array(0),
+        x_curr=jnp.array([1.0, 2.0]),
+        fx_curr=jnp.array([3.0, 4.0]),
+        X_hist=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
+        F_hist=jnp.array([[5.0, 6.0], [7.0, 8.0]]),
+    )
+    pytree_utils.assert_valid_pytree(state)
+
+
+def test_anderson_params_pytree():
+    params = anderson.AndersonParams(
+        m=2,
+        tol=1e-8,
+        lam=1e-14,
+        beta=1.0,
+        static_loop=True,
+        callback=_logger,
+    )
+    pytree_utils.assert_valid_pytree(params)
 
 
 @pytest.mark.parametrize(

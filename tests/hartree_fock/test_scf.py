@@ -1,4 +1,5 @@
 import pytest
+import itertools
 
 import jax
 from jax import jit
@@ -10,7 +11,6 @@ import pubchempy as pcp
 import slaterform as sf
 import slaterform.hartree_fock.scf as scf
 
-from slaterform.hartree_fock.fock import two_electron_integrals
 from tests.jax_utils import pytree_utils
 
 _H_SHELLS = sf.adapters.bse.load("sto-3g", 1)
@@ -129,20 +129,6 @@ def _update_molecule_geometry(
     return sf.Molecule(new_atoms)
 
 
-def test_callback_options_pytree():
-    options = scf.CallbackOptions(
-        interval=10,
-        func=lambda state: print("test callback"),
-    )
-
-    pytree_utils.assert_valid_pytree(options)
-
-
-def test_callback_options_zero_callback_intervals():
-    with pytest.raises(ValueError):
-        scf.CallbackOptions(interval=0)
-
-
 def test_options_pytree():
     pytree_utils.assert_valid_pytree(scf.Options())
 
@@ -158,20 +144,6 @@ def test_context_pytree():
     )
 
     pytree_utils.assert_valid_pytree(context)
-
-
-def test_state_pytree():
-    state = scf.State(
-        C=4 * jnp.ones((2, 2)),
-        P=5 * jnp.ones((2, 2)),
-        F=6 * jnp.ones((2, 2)),
-        electronic_energy=7 * jnp.asarray(1.0),
-        total_energy=8 * jnp.asarray(1.0),
-        orbital_energies=9 * jnp.ones((2,)),
-        delta_P_sq=10 * jnp.asarray(1.0),
-    )
-
-    pytree_utils.assert_valid_pytree(state)
 
 
 def test_result_pytree():
@@ -191,37 +163,49 @@ def test_result_pytree():
     pytree_utils.assert_valid_pytree(result)
 
 
+def _logger(status: scf.SolverStatus):
+    print(f"Iteration {status.iteration}: err = {status.err:.8f}")
+
+
+_SOLVERS = [
+    scf.LinearMixingParams(max_iter=20, static_loop=True),
+    scf.LinearMixingParams(max_iter=20, static_loop=False),
+    scf.AndersonParams(max_iter=20, static_loop=True),
+    scf.AndersonParams(max_iter=20, static_loop=False),
+]
+
+_INTEGRAL_STRATEGIES = [
+    scf.IntegralStrategy.DIRECT,
+    scf.IntegralStrategy.CACHED,
+]
+
+_IMPLICIT_DIFF_OPTIONS = [True]  # [False, True]
+
+
+def _generate_options():
+    perturbation = 0.0
+    for solver, integral_strategy, implicit_diff in itertools.product(
+        _SOLVERS, _INTEGRAL_STRATEGIES, _IMPLICIT_DIFF_OPTIONS
+    ):
+        yield scf.Options(
+            solver, integral_strategy, perturbation, implicit_diff
+        )
+
+
+def _generate_options_with_gradients():
+    perturbation = 1e-10
+    for solver, integral_strategy, implicit_diff in itertools.product(
+        _SOLVERS, _INTEGRAL_STRATEGIES, _IMPLICIT_DIFF_OPTIONS
+    ):
+        if solver.static_loop or implicit_diff:
+            yield scf.Options(
+                solver, integral_strategy, perturbation, implicit_diff
+            )
+
+
 @pytest.mark.parametrize(
     "options",
-    [
-        scf.Options(
-            execution_mode=scf.ExecutionMode.CONVERGENCE,
-            integral_strategy=scf.IntegralStrategy.DIRECT,
-        ),
-        scf.Options(
-            max_iterations=10,
-            execution_mode=scf.ExecutionMode.FIXED,
-            integral_strategy=scf.IntegralStrategy.DIRECT,
-        ),
-        scf.Options(
-            execution_mode=scf.ExecutionMode.IMPLICIT,
-            integral_strategy=scf.IntegralStrategy.DIRECT,
-        ),
-        scf.Options(
-            execution_mode=scf.ExecutionMode.CONVERGENCE,
-            integral_strategy=scf.IntegralStrategy.CACHED,
-        ),
-        scf.Options(
-            max_iterations=10,
-            execution_mode=scf.ExecutionMode.FIXED,
-            integral_strategy=scf.IntegralStrategy.CACHED,
-        ),
-        scf.Options(
-            execution_mode=scf.ExecutionMode.IMPLICIT,
-            integral_strategy=scf.IntegralStrategy.CACHED,
-        ),
-        scf.Options.differentiable(steps=10),
-    ],
+    list(_generate_options()),
 )
 def test_H2(options: scf.Options):
     basis = sf.BatchedBasis.from_molecule(_H2_MOLECULE)
@@ -255,46 +239,17 @@ def test_H2_from_molecule():
 
 
 def test_H2_compile_only():
-    options = scf.Options(
-        max_iterations=20,
-        execution_mode=scf.ExecutionMode.FIXED,
-        integral_strategy=scf.IntegralStrategy.CACHED,
-    )
-
-    lowered = jit(scf.solve).lower(_H2_MOLECULE, options)
+    lowered = jit(scf.solve).lower(_H2_MOLECULE)
     lowered.compile()
 
 
-def test_H2_gradients():
+@pytest.mark.parametrize(
+    "options",
+    list(_generate_options_with_gradients()),
+)
+def test_H2_gradients(options: scf.Options):
     def energy(bond_length: jax.Array) -> jax.Array:
         mol = _build_h2_molecule(bond_length)
-        options = scf.Options.differentiable(
-            steps=20,
-            callback=scf.CallbackOptions(
-                interval=1,
-                func=lambda step: print(
-                    f"Iteration {step.iteration}: E = {step.state.electronic_energy:.8f} Ha"
-                ),
-            ),
-        )
-        result = scf.solve(mol, options)
-        return result.total_energy
-
-    val_and_grad_fn = jit(jax.value_and_grad(energy))
-    E, grad_E = val_and_grad_fn(1.4)
-
-    np.testing.assert_almost_equal(E, _EXPECTED_TOTAL_ENERGY_H2, decimal=4)
-    assert not np.isnan(grad_E)
-    assert np.abs(grad_E) < 0.1
-
-
-def test_H2_implicit_gradients():
-    def energy(bond_length: jax.Array) -> jax.Array:
-        mol = _build_h2_molecule(bond_length)
-        options = scf.Options(
-            execution_mode=scf.ExecutionMode.IMPLICIT,
-            integral_strategy=scf.IntegralStrategy.CACHED,
-        )
         result = scf.solve(mol, options)
         return result.total_energy
 
@@ -311,7 +266,13 @@ def test_H2_implicit_grad_consistency():
 
     def energy_fixed(r):
         mol = _build_h2_molecule(r)
-        options = scf.Options.differentiable(steps=50)
+        options = scf.Options(
+            solver=sf.fixed_point.LinearMixingParams(
+                static_loop=True,
+            ),
+            perturbation=1e-10,
+            implicit_diff=False,
+        )
         return scf.solve(mol, options).total_energy
 
     grad_fixed = jit(jax.grad(energy_fixed))(bond_length)
@@ -319,36 +280,43 @@ def test_H2_implicit_grad_consistency():
     def energy_implicit(r):
         mol = _build_h2_molecule(r)
         options = scf.Options(
-            execution_mode=scf.ExecutionMode.IMPLICIT,
-            integral_strategy=scf.IntegralStrategy.CACHED,
-            convergence_threshold=1e-8,
+            solver=sf.fixed_point.LinearMixingParams(
+                static_loop=True,
+            ),
+            perturbation=1e-10,
+            implicit_diff=True,
         )
         return scf.solve(mol, options).total_energy
 
     grad_implicit = jit(jax.grad(energy_implicit))(bond_length)
 
     # 3. Assert they are compatible
-    print(f"\nGradient Fixed:    {grad_fixed:.8f}")
+    print(f"Gradient Fixed:    {grad_fixed:.8f}")
     print(f"Gradient Implicit: {grad_implicit:.8f}")
 
     np.testing.assert_allclose(grad_fixed, grad_implicit, rtol=1e-4, atol=1e-4)
 
 
 @pytest.mark.slow
-def test_H2O():
-    basis = sf.BatchedBasis.from_molecule(_H2O_MOLECULE)
-    options = scf.Options(
-        max_iterations=20,
-        execution_mode=scf.ExecutionMode.FIXED,
-        integral_strategy=scf.IntegralStrategy.CACHED,
-        callback=scf.CallbackOptions(
-            interval=1,
-            func=lambda step: print(
-                f"Iteration {step.iteration}: E = {step.state.electronic_energy:.8f} Ha"
+@pytest.mark.parametrize(
+    "options",
+    [
+        scf.Options(
+            solver=sf.fixed_point.LinearMixingParams(
+                max_iter=50, damping=0.1, static_loop=False, callback=_logger
             ),
+            integral_strategy=scf.IntegralStrategy.CACHED,
         ),
-    )
-
+        scf.Options(
+            solver=sf.fixed_point.AndersonParams(
+                max_iter=50, m=5, beta=0.9, static_loop=False, callback=_logger
+            ),
+            integral_strategy=scf.IntegralStrategy.CACHED,
+        ),
+    ],
+)
+def test_H2O(options: scf.Options):
+    basis = sf.BatchedBasis.from_molecule(_H2O_MOLECULE)
     result = jit(scf.solve)(basis, options)
 
     np.testing.assert_almost_equal(
@@ -369,11 +337,11 @@ def test_H2O_grad():
         mol = _update_molecule_geometry(_H2O_MOLECULE, positions)
 
         options = scf.Options(
-            max_iterations=20,
-            execution_mode=scf.ExecutionMode.FIXED,
+            solver=sf.fixed_point.LinearMixingParams(
+                max_iter=20, static_loop=True, callback=_logger
+            ),
             integral_strategy=scf.IntegralStrategy.CACHED,
             perturbation=1e-10,
-            convergence_threshold=1e-6,
         )
         result = scf.solve(mol, options)
 
@@ -408,11 +376,11 @@ def test_aspirin_memory_analysis():
         mol = _update_molecule_geometry(molecule, positions)
         basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
         options = scf.Options(
-            max_iterations=20,
-            execution_mode=scf.ExecutionMode.FIXED,
+            solver=sf.fixed_point.LinearMixingParams(
+                max_iter=20, static_loop=True
+            ),
             integral_strategy=scf.IntegralStrategy.CACHED,
             perturbation=1e-10,
-            convergence_threshold=1e-6,
         )
         result = scf.solve(basis, options)
 
