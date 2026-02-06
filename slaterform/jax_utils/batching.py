@@ -158,13 +158,12 @@ def _generate_tree_stack(
 
 
 def _batch_tuple_indices(
-    tuple_indices: np.ndarray, max_batch_size: int
+    tuple_indices: np.ndarray, batch_size: int
 ) -> tuple[jax.Array, jax.Array]:
     """Batch tuple indices with padding."""
     n_tuples = tuple_indices.shape[0]
     tuple_size = tuple_indices.shape[1]
 
-    batch_size = min(n_tuples, max_batch_size)
     remainder = n_tuples % batch_size
     pad_size = (batch_size - remainder) if remainder != 0 else 0
 
@@ -213,7 +212,7 @@ def _map_to_local_tuple_indices(
     return local_tuple_indices
 
 
-def _batch_group(group: _Group, max_batch_size: int) -> BatchedTreeTuples:
+def _batch_group(group: _Group, batch_size: int) -> BatchedTreeTuples:
     # Generate tuple_size stacks and global indices
     stacks = []
     global_block_indices = []
@@ -229,7 +228,7 @@ def _batch_group(group: _Group, max_batch_size: int) -> BatchedTreeTuples:
         global_tuple_indices, global_block_indices
     )
     batched_tuple_indices, padding_mask = _batch_tuple_indices(
-        local_tuple_indices, max_batch_size
+        local_tuple_indices, batch_size
     )
 
     return BatchedTreeTuples(
@@ -244,7 +243,7 @@ def batch_tree_tuples(
     trees: Sequence[Tree],
     tuple_length: int,
     tuple_indices: Sequence[tuple[int, ...]],
-    max_batch_size: int,
+    batch_size: int,
 ) -> Sequence[BatchedTreeTuples]:
     """Generates batches of tree tuples from the given trees and tuple indices.
 
@@ -260,7 +259,7 @@ def batch_tree_tuples(
         tuple_length: The length of each tree tuple.
         tuple_indices: A sequence of tuples of indices. Each tuple has length
             tuple_length. The indices in each tuple are between 0 and n_trees-1.
-        max_batch_size: The maximum batch size for batching the tuples.
+        batch_size: The batch size for batching the tuples.
 
     Returns:
         A sequence of BatchedTrees, one for each unique block tuple signature.
@@ -269,4 +268,4 @@ def batch_tree_tuples(
     """
     groups = _group_tree_tuples(trees, tuple_length, tuple_indices)
 
-    return [_batch_group(g, max_batch_size) for g in groups.values()]
+    return [_batch_group(g, batch_size) for g in groups.values()]

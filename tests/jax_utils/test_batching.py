@@ -44,7 +44,7 @@ class _BatchTreeTuplesTestCase:
     trees: list[Any]
     tuple_length: int
     tuple_indices: list[tuple[int, ...]]
-    max_batch_size: int
+    batch_size: int
     expected_batched: Sequence[sf.BatchedTreeTuples]
 
 
@@ -53,7 +53,7 @@ class _BatchTreeTuplesPropertyTestCase:
     trees: list[Any]
     tuple_length: int
     tuple_indices: list[tuple[int, ...]]
-    max_batch_size: int
+    batch_size: int
 
 
 def _assert_trees_equal(actual: Any, expected: Any):
@@ -104,7 +104,7 @@ def test_compute_tree_signature(case: _ComputeTreeSignatureTestCase):
             ],
             tuple_length=2,
             tuple_indices=[],
-            max_batch_size=2,
+            batch_size=2,
             expected_batched=[],
         ),
         _BatchTreeTuplesTestCase(
@@ -147,7 +147,7 @@ def test_compute_tree_signature(case: _ComputeTreeSignatureTestCase):
                 (2, 3),  # A2, B1
                 (3, 3),  # B1, B1
             ],
-            max_batch_size=2,
+            batch_size=2,
             expected_batched=[
                 # A1, A1
                 sf.BatchedTreeTuples(
@@ -272,12 +272,13 @@ def test_compute_tree_signature(case: _ComputeTreeSignatureTestCase):
                         [
                             [
                                 [0, 0],
+                                [0, 0],  # padding
                             ],
                         ]
                     ),
                     padding_mask=jnp.array(
                         [
-                            [1],
+                            [1, 0],
                         ]
                     ),
                 ),
@@ -301,14 +302,12 @@ def test_compute_tree_signature(case: _ComputeTreeSignatureTestCase):
                     ),
                     tuple_indices=jnp.array(
                         [
-                            [
-                                [0, 0],
-                            ],
+                            [[0, 0], [0, 0]],  # padding
                         ]
                     ),
                     padding_mask=jnp.array(
                         [
-                            [1],
+                            [1, 0],
                         ]
                     ),
                 ),
@@ -334,12 +333,13 @@ def test_compute_tree_signature(case: _ComputeTreeSignatureTestCase):
                         [
                             [
                                 [0, 0],
+                                [0, 0],  # padding
                             ],
                         ]
                     ),
                     padding_mask=jnp.array(
                         [
-                            [1],
+                            [1, 0],
                         ]
                     ),
                 ),
@@ -352,7 +352,7 @@ def test_batch_tree_tuples(case: _BatchTreeTuplesTestCase):
         trees=case.trees,
         tuple_length=case.tuple_length,
         tuple_indices=case.tuple_indices,
-        max_batch_size=case.max_batch_size,
+        batch_size=case.batch_size,
     )
 
     assert len(batched_tree_tuples) == len(case.expected_batched)
@@ -406,7 +406,7 @@ _BatchTreeTuplePropertyTestCases = [
             (3, 4, 0, 1),
             (4, 0, 1, 2),
         ],
-        max_batch_size=2,
+        batch_size=2,
     ),
 ]
 
@@ -451,7 +451,7 @@ def test_batch_tree_tuples_preserves_tuples(
         trees=case.trees,
         tuple_length=case.tuple_length,
         tuple_indices=case.tuple_indices,
-        max_batch_size=case.max_batch_size,
+        batch_size=case.batch_size,
     )
 
     # Check that the batched tree tuples reconstruct the original tuples.
@@ -471,7 +471,7 @@ def test_batch_tree_tuples_verify_global_indices(
         trees=case.trees,
         tuple_length=case.tuple_length,
         tuple_indices=case.tuple_indices,
-        max_batch_size=case.max_batch_size,
+        batch_size=case.batch_size,
     )
 
     for bt in batched_tree_tuples:
@@ -486,9 +486,9 @@ def test_batch_tree_tuples_batch_sizes(
         trees=case.trees,
         tuple_length=case.tuple_length,
         tuple_indices=case.tuple_indices,
-        max_batch_size=case.max_batch_size,
+        batch_size=case.batch_size,
     )
 
     for bt in batched_tree_tuples:
-        batch_size = bt.tuple_indices.shape[0]
-        assert batch_size <= case.max_batch_size
+        batch_size = bt.tuple_indices.shape[1]
+        assert batch_size == case.batch_size
