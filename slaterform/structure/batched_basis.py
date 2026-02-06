@@ -101,14 +101,14 @@ class BatchedBasis:
             trees=basis_blocks,
             tuple_length=2,
             tuple_indices=pairs,
-            max_batch_size=batch_size_1e,
+            batch_size=batch_size_1e,
         )
 
         batches_2e = batch_tree_tuples(
             trees=basis_blocks,
             tuple_length=4,
             tuple_indices=list(iter_canonical_quartets(n_blocks)),
-            max_batch_size=batch_size_2e,
+            batch_size=batch_size_2e,
         )
 
         return cls(

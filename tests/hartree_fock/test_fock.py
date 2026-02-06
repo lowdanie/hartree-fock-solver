@@ -2,6 +2,8 @@ import itertools
 import functools
 from collections.abc import Sequence
 
+import pytest
+
 from jax import jit
 from jax import numpy as jnp
 import numpy as np
@@ -109,8 +111,16 @@ _TEST_V = _two_electron_integrals(sf.BatchedBasis.from_molecule(_TEST_MOLECULE))
 _TEST_G = _two_electron_matrix_from_integrals(_TEST_V, _TEST_P)
 
 
-def test_two_electron_matrix(mol=_TEST_MOLECULE, P=_TEST_P, expected=_TEST_G):
-    basis = sf.BatchedBasis.from_molecule(mol)
+@pytest.mark.parametrize(
+    "mol,P,batch_size,expected",
+    [
+        (_TEST_MOLECULE, _TEST_P, 1, _TEST_G),
+        (_TEST_MOLECULE, _TEST_P, 2, _TEST_G),
+        (_TEST_MOLECULE, _TEST_P, 2048, _TEST_G),
+    ],
+)
+def test_two_electron_matrix(mol, P, batch_size, expected):
+    basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
     P_jax = jnp.asarray(P)
 
     G_actual = jit(sf.hartree_fock.two_electron_matrix)(basis, P_jax)
@@ -118,8 +128,16 @@ def test_two_electron_matrix(mol=_TEST_MOLECULE, P=_TEST_P, expected=_TEST_G):
     np.testing.assert_allclose(G_actual, expected, rtol=1e-7, atol=1e-7)
 
 
-def test_two_electron_integrals(mol=_TEST_MOLECULE, expected=_TEST_V):
-    basis = sf.BatchedBasis.from_molecule(mol)
+@pytest.mark.parametrize(
+    "mol,batch_size,expected",
+    [
+        (_TEST_MOLECULE, 1, _TEST_V),
+        (_TEST_MOLECULE, 2, _TEST_V),
+        (_TEST_MOLECULE, 2048, _TEST_V),
+    ],
+)
+def test_two_electron_integrals(mol, batch_size, expected):
+    basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
 
     V_actual = jit(sf.hartree_fock.two_electron_integrals)(basis)
 
