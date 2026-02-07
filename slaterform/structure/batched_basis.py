@@ -16,7 +16,7 @@ from slaterform.symmetry.quartet import iter_canonical_quartets
 
 def _build_basis_blocks(
     atoms: Sequence[Atom],
-) -> Sequence[BasisBlock]:
+) -> list[BasisBlock]:
     basis_blocks = []
     for atom in atoms:
         basis_blocks.extend(
@@ -86,6 +86,7 @@ class BatchedBasis:
         batch_size_2e: int = 2048,
     ) -> "BatchedBasis":
         basis_blocks = _build_basis_blocks(molecule.atoms)
+        basis_blocks.sort(key=lambda block: block.n_cart, reverse=True)
 
         n_blocks = len(basis_blocks)
         block_sizes = np.array([block.n_basis for block in basis_blocks])

@@ -105,7 +105,7 @@ def test_atoms():
         ),
         (
             _TEST_MOLECULE_H2O,
-            [0, 1, 2],
+            [0, 4, 5],
         ),
     ],
 )
@@ -135,10 +135,10 @@ def test_block_starts(molecule, expected):
         (
             _TEST_MOLECULE_H2O,
             [
-                [(0, 0), (0, 1)],
-                [(1, 1)],
-                [(0, 2), (1, 2)],
-                [(2, 2)],
+                [(0, 0)],  # SP,SP
+                [(0, 1), (0, 2)],  # SP,S
+                [(1, 1), (1, 2)],  # S,S
+                [(2, 2)],  # S,S
             ],
         ),
     ],

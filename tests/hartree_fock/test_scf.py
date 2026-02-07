@@ -281,7 +281,7 @@ def test_H2_implicit_grad_consistency():
         mol = _build_h2_molecule(r)
         options = scf.Options(
             solver=sf.fixed_point.LinearMixingParams(
-                static_loop=True,
+                static_loop=False,
             ),
             perturbation=1e-10,
             implicit_diff=True,
