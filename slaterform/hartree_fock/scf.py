@@ -290,7 +290,9 @@ def _solve_implicit(
 
 
 def solve(
-    system: BatchedBasis | Molecule, options: Options = Options()
+    system: BatchedBasis | Molecule,
+    options: Options = Options(),
+    P0: Optional[jax.Array] = None,
 ) -> Result:
     """Performs the self-consistent field (SCF) procedure to compute the
     molecular orbital coefficients and energy.
@@ -300,7 +302,8 @@ def solve(
     """
     basis = _build_basis(system)
     context = build_context(basis, options)
-    P0 = build_initial_density(context)
+    if P0 is None:
+        P0 = build_initial_density(context)
 
     if options.implicit_diff:
         P, status = _solve_implicit(P0, context, options)

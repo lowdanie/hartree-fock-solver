@@ -238,6 +238,24 @@ def test_H2_from_molecule():
     )
 
 
+def test_H2_initial_density():
+    solve_fn = jit(scf.solve)
+    basis = sf.BatchedBasis.from_molecule(_H2_MOLECULE)
+    result = solve_fn(basis)
+
+    new_result = solve_fn(basis, P0=result.density)
+    np.testing.assert_almost_equal(
+        new_result.electronic_energy,
+        _EXPECTED_ELECTRONIC_ENERGY_H2,
+        decimal=4,
+    )
+    np.testing.assert_almost_equal(
+        new_result.total_energy,
+        _EXPECTED_TOTAL_ENERGY_H2,
+        decimal=4,
+    )
+
+
 def test_H2_compile_only():
     lowered = jit(scf.solve).lower(_H2_MOLECULE)
     lowered.compile()
