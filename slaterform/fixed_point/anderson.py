@@ -45,7 +45,7 @@ class AndersonState:
 @dataclasses.dataclass
 class AndersonParams:
     max_iter: int = 50  # Maximum iterations
-    m: types.IntScalar = 5  # History size
+    m: int = 5  # History size
     lam: types.Scalar = 1e-4  # Regularization parameter
     tol: types.Scalar = 1e-05  # Convergence tolerance
     beta: types.Scalar = 1.0  # Mixing dampener
