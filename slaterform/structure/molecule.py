@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 import dataclasses
 
+import jax
 from jax.tree_util import register_pytree_node_class
 
 from slaterform.structure.atom import Atom
@@ -39,3 +40,11 @@ class Molecule:
         ]
 
         return cls(atoms=atoms)
+
+    def with_positions(self, new_positions: jax.Array) -> "Molecule":
+        """Returns a new Molecule with updated atomic positions."""
+        new_atoms = [
+            dataclasses.replace(atom, position=pos)
+            for atom, pos in zip(self.atoms, new_positions)
+        ]
+        return dataclasses.replace(self, atoms=new_atoms)
