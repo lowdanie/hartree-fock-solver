@@ -6,6 +6,7 @@ from jax.tree_util import register_pytree_node_class
 
 from slaterform.structure.atom import Atom
 from slaterform.adapters.bse import load as load_basis
+from slaterform import types
 
 
 @register_pytree_node_class
@@ -41,10 +42,14 @@ class Molecule:
 
         return cls(atoms=atoms)
 
-    def with_positions(self, new_positions: jax.Array) -> "Molecule":
+    def with_positions(self, new_positions: types.Array) -> "Molecule":
         """Returns a new Molecule with updated atomic positions."""
         new_atoms = [
             dataclasses.replace(atom, position=pos)
             for atom, pos in zip(self.atoms, new_positions)
         ]
         return dataclasses.replace(self, atoms=new_atoms)
+
+    @property
+    def n_basis(self) -> int:
+        return sum(gto.n_basis for atom in self.atoms for gto in atom.shells)

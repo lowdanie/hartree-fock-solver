@@ -315,6 +315,13 @@ def test_H2_implicit_grad_consistency():
     np.testing.assert_allclose(grad_fixed, grad_implicit, rtol=1e-4, atol=1e-4)
 
 
+def test_build_initial_density():
+    expected = np.zeros((2, 2), dtype=np.float64)
+    density = scf.build_initial_density(_H2_MOLECULE)
+
+    np.testing.assert_equal(density, expected)
+
+
 @pytest.mark.slow
 @pytest.mark.parametrize(
     "options",

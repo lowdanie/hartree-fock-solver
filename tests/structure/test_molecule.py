@@ -160,3 +160,7 @@ def test_update_positions():
     )
     updated_molecule = _TEST_MOLECULE_HO.with_positions(new_positions)
     assert_molecule_equal(updated_molecule, expected_molecule)
+
+
+def test_n_basis():
+    assert _TEST_MOLECULE_HO.n_basis == 4

@@ -181,8 +181,8 @@ def build_context(basis: BatchedBasis, options: Options) -> Context:
     )
 
 
-def build_initial_density(context: Context) -> jax.Array:
-    n_basis = context.basis.n_basis
+def build_initial_density(system: BatchedBasis | Molecule) -> jax.Array:
+    n_basis = system.n_basis
     return jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
 
 
@@ -303,7 +303,7 @@ def solve(
     basis = _build_basis(system)
     context = build_context(basis, options)
     if P0 is None:
-        P0 = build_initial_density(context)
+        P0 = build_initial_density(system)
 
     if options.implicit_diff:
         P, status = _solve_implicit(P0, context, options)

@@ -5,6 +5,7 @@ import jax
 from jax.tree_util import register_pytree_node_class
 
 import slaterform.types as types
+from slaterform.basis.cartesian import generate_cartesian_powers
 
 
 class PrimitiveType(enum.Enum):
@@ -73,4 +74,15 @@ class ContractedGTO:
             angular_momentum=aux_data[1],
             exponents=children[0],
             coefficients=children[1],
+        )
+
+    @property
+    def n_basis(self) -> int:
+        if self.primitive_type != PrimitiveType.CARTESIAN:
+            raise NotImplementedError(
+                "Only Cartesian contracted GTOs are supported currently."
+            )
+
+        return sum(
+            len(generate_cartesian_powers(l)) for l in self.angular_momentum
         )
