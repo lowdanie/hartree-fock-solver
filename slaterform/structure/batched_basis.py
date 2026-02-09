@@ -104,7 +104,7 @@ class BatchedBasis:
     def from_molecule(
         cls,
         molecule: Molecule,
-        batch_size_1e: int = 4096,
+        batch_size_1e: int = 256,
         batch_size_2e: int = 64,
     ) -> "BatchedBasis":
         basis_blocks, block_atom_indices = _build_basis_blocks(molecule.atoms)

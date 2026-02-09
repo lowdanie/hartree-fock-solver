@@ -112,6 +112,16 @@ def _build_h2_molecule(bond_length: jax.Array) -> sf.Molecule:
     )
 
 
+def _build_h2_positions(bond_length: jax.Array) -> jax.Array:
+    return jnp.array(
+        [
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, bond_length],
+        ],
+        dtype=jnp.float64,
+    )
+
+
 def _update_molecule_geometry(
     template_mol: sf.Molecule, new_positions: jax.Array
 ) -> sf.Molecule:
@@ -266,9 +276,15 @@ def test_H2_compile_only():
     list(_generate_options_with_gradients()),
 )
 def test_H2_gradients(options: scf.Options):
+    molecule = _H2_MOLECULE
+    basis = sf.BatchedBasis.from_molecule(
+        molecule, batch_size_1e=2, batch_size_2e=4
+    )
+
     def energy(bond_length: jax.Array) -> jax.Array:
-        mol = _build_h2_molecule(bond_length)
-        result = scf.solve(mol, options)
+        new_positions = _build_h2_positions(bond_length)
+        new_basis = basis.with_positions(new_positions)
+        result = scf.solve(new_basis, options)
         return result.total_energy
 
     val_and_grad_fn = jit(jax.value_and_grad(energy))
@@ -281,9 +297,12 @@ def test_H2_gradients(options: scf.Options):
 
 def test_H2_implicit_grad_consistency():
     bond_length = 1.4
+    molecule = _H2_MOLECULE
+    basis = sf.BatchedBasis.from_molecule(molecule, batch_size_2e=2)
 
     def energy_fixed(r):
-        mol = _build_h2_molecule(r)
+        new_positions = _build_h2_positions(r)
+        new_basis = basis.with_positions(new_positions)
         options = scf.Options(
             solver=sf.fixed_point.LinearMixingParams(
                 static_loop=True,
@@ -291,12 +310,13 @@ def test_H2_implicit_grad_consistency():
             perturbation=1e-10,
             implicit_diff=False,
         )
-        return scf.solve(mol, options).total_energy
+        return scf.solve(new_basis, options).total_energy
 
     grad_fixed = jit(jax.grad(energy_fixed))(bond_length)
 
     def energy_implicit(r):
-        mol = _build_h2_molecule(r)
+        new_positions = _build_h2_positions(r)
+        new_basis = basis.with_positions(new_positions)
         options = scf.Options(
             solver=sf.fixed_point.LinearMixingParams(
                 static_loop=False,
@@ -304,7 +324,7 @@ def test_H2_implicit_grad_consistency():
             perturbation=1e-10,
             implicit_diff=True,
         )
-        return scf.solve(mol, options).total_energy
+        return scf.solve(new_basis, options).total_energy
 
     grad_implicit = jit(jax.grad(energy_implicit))(bond_length)
 
