@@ -16,14 +16,37 @@ from slaterform.symmetry.quartet import iter_canonical_quartets
 
 def _build_basis_blocks(
     atoms: Sequence[Atom],
-) -> list[BasisBlock]:
-    basis_blocks = []
-    for atom in atoms:
-        basis_blocks.extend(
+) -> tuple[list[BasisBlock], list[int]]:
+    blocks: list[BasisBlock] = []
+    indices: list[int] = []
+    for i, atom in enumerate(atoms):
+        atom_blocks = [
             BasisBlock.from_gto(gto, atom.position) for gto in atom.shells
-        )
+        ]
+        blocks.extend(atom_blocks)
+        indices.extend([i] * len(atom_blocks))
 
-    return basis_blocks
+    paired = zip(blocks, indices)
+    sorted_paired = sorted(
+        paired, key=lambda pair: pair[0].n_cart, reverse=True
+    )
+    sorted_blocks, sorted_indices = zip(*sorted_paired)
+    return list(sorted_blocks), list(sorted_indices)
+
+
+def _update_batch_centers(
+    batch: BatchedTreeTuples, global_block_centers: jax.Array
+) -> BatchedTreeTuples:
+    """Returns a new BatchedTreeTuples with updated centers."""
+    new_stacks = []
+    for stack, global_indices in zip(batch.stacks, batch.global_tree_indices):
+        # Gather the new centers for this batch
+        # shape: (batch_size, 3)
+        new_stack_centers = global_block_centers[global_indices]
+        new_stack = dataclasses.replace(stack, center=new_stack_centers)
+        new_stacks.append(new_stack)
+
+    return dataclasses.replace(batch, stacks=tuple(new_stacks))
 
 
 @register_pytree_node_class
@@ -40,6 +63,10 @@ class BatchedBasis:
     # The starting indices of each basis block in the full basis set.
     # Shape: (n_blocks,)
     block_starts: jax.Array
+
+    # The indices of the atoms corresponding to each basis block.
+    # Shape: (n_blocks,)
+    block_atom_indices: jax.Array
 
     # Batches for 1-electron integrals. Tuple length = 2.
     batches_1e: Sequence[BatchedTreeTuples]
@@ -62,6 +89,7 @@ class BatchedBasis:
             self.atoms,
             self.basis_blocks,
             self.block_starts,
+            self.block_atom_indices,
             self.batches_1e,
             self.batches_2e,
         )
@@ -70,23 +98,16 @@ class BatchedBasis:
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(
-            atoms=children[0],
-            basis_blocks=children[1],
-            block_starts=children[2],
-            batches_1e=children[3],
-            batches_2e=children[4],
-        )
+        return cls(*children)
 
     @classmethod
     def from_molecule(
         cls,
         molecule: Molecule,
         batch_size_1e: int = 4096,
-        batch_size_2e: int = 2048,
+        batch_size_2e: int = 64,
     ) -> "BatchedBasis":
-        basis_blocks = _build_basis_blocks(molecule.atoms)
-        basis_blocks.sort(key=lambda block: block.n_cart, reverse=True)
+        basis_blocks, block_atom_indices = _build_basis_blocks(molecule.atoms)
 
         n_blocks = len(basis_blocks)
         block_sizes = np.array([block.n_basis for block in basis_blocks])
@@ -113,5 +134,39 @@ class BatchedBasis:
         )
 
         return cls(
-            molecule.atoms, basis_blocks, block_starts, batches_1e, batches_2e
+            molecule.atoms,
+            basis_blocks,
+            block_starts,
+            jnp.asarray(block_atom_indices),
+            batches_1e,
+            batches_2e,
+        )
+
+    def with_positions(self, positions: jax.Array) -> "BatchedBasis":
+        """Returns a new BatchedBasis with updated atomic positions."""
+        atoms = [
+            atom.with_position(pos) for atom, pos in zip(self.atoms, positions)
+        ]
+
+        block_centers = positions[self.block_atom_indices]
+        basis_blocks = [
+            block.with_center(center)
+            for block, center in zip(self.basis_blocks, block_centers)
+        ]
+
+        batches_1e = [
+            _update_batch_centers(batch, block_centers)
+            for batch in self.batches_1e
+        ]
+        batches_2e = [
+            _update_batch_centers(batch, block_centers)
+            for batch in self.batches_2e
+        ]
+
+        return dataclasses.replace(
+            self,
+            atoms=atoms,
+            basis_blocks=basis_blocks,
+            batches_1e=batches_1e,
+            batches_2e=batches_2e,
         )

@@ -92,6 +92,12 @@ def test_atoms():
         pytree_utils.assert_pytrees_equal(actual, expected)
 
 
+def test_block_atom_indices():
+    basis = jit(sf.BatchedBasis.from_molecule)(_TEST_MOLECULE_H2O)
+    expected = np.array([2, 0, 1], dtype=np.int32)
+    np.testing.assert_array_equal(basis.block_atom_indices, expected)
+
+
 @pytest.mark.parametrize(
     "molecule,expected",
     [
@@ -193,3 +199,42 @@ def test_2e_tuples(molecule, expected):
             actual.extend(batch)
 
     assert Counter(actual) == Counter(expected)
+
+
+@pytest.mark.parametrize(
+    "molecule",
+    [
+        _TEST_MOLECULE_H2,
+        _TEST_MOLECULE_HO,
+        _TEST_MOLECULE_H2O,
+    ],
+)
+def test_with_positions(molecule: sf.Molecule):
+    basis = sf.BatchedBasis.from_molecule(molecule)
+    new_positions = jnp.array([atom.position for atom in molecule.atoms]) + 1.0
+    new_basis = basis.with_positions(new_positions)
+
+    for i, atom in enumerate(new_basis.atoms):
+        np.testing.assert_array_equal(atom.position, new_positions[i])
+
+    for i, block in enumerate(new_basis.basis_blocks):
+        expected_center = new_positions[basis.block_atom_indices[i]]
+        np.testing.assert_array_equal(block.center, expected_center)
+
+    for batch in new_basis.batches_1e:
+        for stack, global_indices in zip(
+            batch.stacks, batch.global_tree_indices
+        ):
+            for center, global_idx in zip(stack.center, global_indices):
+                atom_idx = basis.block_atom_indices[global_idx]
+                expected_center = new_positions[atom_idx]
+                np.testing.assert_array_equal(center, expected_center)
+
+    for batch in new_basis.batches_2e:
+        for stack, global_indices in zip(
+            batch.stacks, batch.global_tree_indices
+        ):
+            for center, global_idx in zip(stack.center, global_indices):
+                atom_idx = basis.block_atom_indices[global_idx]
+                expected_center = new_positions[atom_idx]
+                np.testing.assert_array_equal(center, expected_center)

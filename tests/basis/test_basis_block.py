@@ -151,3 +151,22 @@ def test_max_degree():
     )
 
     assert block.max_degree == 2
+
+
+def test_with_center():
+    block = sf.BasisBlock(
+        center=np.array([0.0, 0.0, 0.0]),
+        exponents=np.array([0.1], dtype=np.float64),
+        cartesian_powers=np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]]),
+        contraction_matrix=np.array([[1.0], [0.5], [0.1]], dtype=np.float64),
+        basis_transform=np.ones((2, 3), dtype=np.float64),
+    )
+
+    new_center = np.array([1.0, 1.0, 1.0])
+    new_block = block.with_center(new_center)
+
+    np.testing.assert_array_equal(new_block.center, new_center)
+    assert new_block.exponents is block.exponents
+    assert new_block.cartesian_powers is block.cartesian_powers
+    assert new_block.contraction_matrix is block.contraction_matrix
+    assert new_block.basis_transform is block.basis_transform

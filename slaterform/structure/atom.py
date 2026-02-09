@@ -40,3 +40,7 @@ class Atom:
             position=children[0],
             shells=children[1],
         )
+
+    def with_position(self, new_position: types.Array) -> "Atom":
+        """Returns a new Atom with an updated position."""
+        return dataclasses.replace(self, position=new_position)

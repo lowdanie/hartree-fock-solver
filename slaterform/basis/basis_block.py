@@ -141,3 +141,7 @@ class BasisBlock:
             contraction_matrix=norm_factors * contraction_matrix,
             basis_transform=basis_transform,
         )
+
+    def with_center(self, new_center: types.Array) -> "BasisBlock":
+        """Returns a new BasisBlock with an updated center."""
+        return dataclasses.replace(self, center=new_center)
