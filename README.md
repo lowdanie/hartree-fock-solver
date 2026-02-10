@@ -6,7 +6,7 @@
 `slaterform` is a differentiable Hartree-Fock engine written in `jax`.
 It includes a native implementation of the necessary electron integrals and supports standard basis sets from [basis set exchange](https://www.basissetexchange.org/).
 
-# Example: Geometry Optimization
+# Example: Butane Geometry Optimization
 
 Because `slaterform` is written in pure `jax`, it can easily be used to define a differentiable molecular energy function. This function can be minimized in a standard `jax` optimization loop to optimize the molecular geometry.
 
@@ -34,12 +34,14 @@ total_energy_and_grad = jax.jit(jax.value_and_grad(total_energy))
 
 In this [colab notebook](https://colab.research.google.com/github/lowdanie/hartree-fock-solver/blob/main/notebooks/geometry_optimization.ipynb)
 you can select a molecule, optimize the nuclear positions with `optax`, and finally visualize the trajectory of the nuclei and electron density using
-[3dmol](https://3dmol.org/doc/index.html). Here is a sample output for [methane](https://en.wikipedia.org/wiki/Methane). We initialize the nuclei to lie flat on a plane, and the optimizer moves them into the classic tetrahedral configuration. The blue cloud is rendered by sampling the electron density returned by `scf.solve`.
+[3dmol](https://3dmol.org/doc/index.html). Here is a sample output for [butane](https://en.wikipedia.org/wiki/Butane). We initialize the carbon chain to lie flat on a plane, and the optimizer moves them into the classic zig-zag configuration. The blue cloud is rendered by sampling the electron density returned by `scf.solve`.
+
+
 
 <table align="center">
   <tr>
     <td width="500px">
-    <video src="https://github.com/user-attachments/assets/8379c4d4-9f52-4c8f-92b3-331f153738a4"></video>
+    <video src="https://github.com/user-attachments/assets/33a6ad09-6d3f-4b3f-b0d7-8608a40af69a"></video>
 </td>
   </tr>
 </table>
