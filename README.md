@@ -34,7 +34,7 @@ total_energy_and_grad = jax.jit(jax.value_and_grad(total_energy))
 
 In this [colab notebook](https://colab.research.google.com/github/lowdanie/hartree-fock-solver/blob/main/notebooks/geometry_optimization.ipynb)
 you can select a molecule, optimize the nuclear positions with `optax`, and finally visualize the trajectory of the nuclei and electron density using
-[3dmol](https://3dmol.org/doc/index.html). Here is a sample output for [butane](https://en.wikipedia.org/wiki/Butane). We initialize the carbon chain to lie flat on a plane, and the optimizer moves it into the classic zig-zag configuration. The blue cloud is rendered by sampling the electron density returned by `scf.solve`.
+[3dmol](https://3dmol.org/doc/index.html). Here is a sample output for [butane](https://en.wikipedia.org/wiki/Butane). We initialize the carbon chain to lie in a straight line, and the optimizer moves it into the classic zig-zag configuration. The blue cloud is rendered by sampling the electron density returned by `scf.solve`.
 
 
 
