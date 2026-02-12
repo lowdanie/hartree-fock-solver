@@ -1,5 +1,5 @@
 import dataclasses
-from typing import TypeAlias
+from typing import Any, TypeAlias
 
 import jax
 from jax import numpy as jnp
@@ -32,3 +32,11 @@ def promote_dataclass_fields(obj):
             setattr(obj, field.name, jnp.asarray(value))
         elif field.type == StaticArray:
             setattr(obj, field.name, np.asarray(value))
+
+
+def safe_cast(x: Any, dtype: jnp.dtype) -> jax.Array:
+    """Casts an object to the specified type if possible."""
+    if hasattr(x, "astype"):
+        return x.astype(dtype)
+
+    return x

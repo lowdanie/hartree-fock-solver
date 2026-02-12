@@ -31,7 +31,7 @@ jobs:
 
       - name: Generate Coverage Badge
         run: |
-          pip install coverage-badge
+          pip install coverage-badge "setuptools<70"
           coverage-badge -f -o coverage.svg
 
       - name: Commit and Push Badge

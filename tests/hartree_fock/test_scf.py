@@ -93,25 +93,6 @@ _EXPECTED_ELECTRONIC_ENERGY_H2O = -84.04881208  # Hartree
 _EXPECTED_TOTAL_ENERGY_H2O = -74.96444758  # Hartree
 
 
-def _build_h2_molecule(bond_length: jax.Array) -> sf.Molecule:
-    return sf.Molecule(
-        atoms=[
-            sf.Atom(
-                symbol="H",
-                number=1,
-                position=jnp.array([0.0, 0.0, 0.0], dtype=np.float64),
-                shells=_H_SHELLS,
-            ),
-            sf.Atom(
-                symbol="H",
-                number=1,
-                position=jnp.array([0.0, 0.0, bond_length], dtype=np.float64),
-                shells=_H_SHELLS,
-            ),
-        ]
-    )
-
-
 def _build_h2_positions(bond_length: jax.Array) -> jax.Array:
     return jnp.array(
         [
@@ -120,23 +101,6 @@ def _build_h2_positions(bond_length: jax.Array) -> jax.Array:
         ],
         dtype=jnp.float64,
     )
-
-
-def _update_molecule_geometry(
-    template_mol: sf.Molecule, new_positions: jax.Array
-) -> sf.Molecule:
-    """Creates a new Molecule with the new positions."""
-    new_atoms = []
-    for i, atom in enumerate(template_mol.atoms):
-        new_atoms.append(
-            sf.Atom(
-                symbol=atom.symbol,
-                number=atom.number,
-                position=new_positions[i],
-                shells=atom.shells,
-            )
-        )
-    return sf.Molecule(new_atoms)
 
 
 def test_options_pytree():
@@ -184,12 +148,9 @@ _SOLVERS = [
     scf.AndersonParams(max_iter=20, static_loop=False),
 ]
 
-_INTEGRAL_STRATEGIES = [
-    scf.IntegralStrategy.DIRECT,
-    scf.IntegralStrategy.CACHED,
-]
+_INTEGRAL_STRATEGIES = [scf.DirectStrategy(), scf.CachedStrategy()]
 
-_IMPLICIT_DIFF_OPTIONS = [True]  # [False, True]
+_IMPLICIT_DIFF_OPTIONS = [False, True]
 
 
 def _generate_options():
@@ -261,6 +222,32 @@ def test_H2_initial_density():
     )
     np.testing.assert_almost_equal(
         new_result.total_energy,
+        _EXPECTED_TOTAL_ENERGY_H2,
+        decimal=4,
+    )
+
+
+def test_H2_integrals_f32():
+    solve_fn = jit(scf.solve)
+    basis = sf.BatchedBasis.from_molecule(
+        _H2_MOLECULE, batch_size_1e=2, batch_size_2e=2
+    )
+    options = scf.Options(
+        solver=sf.fixed_point.LinearMixingParams(),
+        integral_strategy=scf.CachedStrategy(dtype=jnp.float32),
+        perturbation=1e-10,
+        implicit_diff=False,
+    )
+
+    result = solve_fn(basis, options)
+
+    np.testing.assert_almost_equal(
+        result.electronic_energy,
+        _EXPECTED_ELECTRONIC_ENERGY_H2,
+        decimal=4,
+    )
+    np.testing.assert_almost_equal(
+        result.total_energy,
         _EXPECTED_TOTAL_ENERGY_H2,
         decimal=4,
     )
@@ -350,13 +337,11 @@ def test_build_initial_density():
             solver=sf.fixed_point.LinearMixingParams(
                 max_iter=50, damping=0.1, static_loop=False, callback=_logger
             ),
-            integral_strategy=scf.IntegralStrategy.CACHED,
         ),
         scf.Options(
             solver=sf.fixed_point.AndersonParams(
                 max_iter=50, m=5, beta=0.9, static_loop=False, callback=_logger
             ),
-            integral_strategy=scf.IntegralStrategy.CACHED,
         ),
     ],
 )
@@ -379,13 +364,12 @@ def test_H2O(options: scf.Options):
 @pytest.mark.slow
 def test_H2O_grad():
     def total_energy(positions: jax.Array):
-        mol = _update_molecule_geometry(_H2O_MOLECULE, positions)
+        mol = _H2O_MOLECULE.with_positions(positions)
 
         options = scf.Options(
             solver=sf.fixed_point.LinearMixingParams(
                 max_iter=20, static_loop=True, callback=_logger
             ),
-            integral_strategy=scf.IntegralStrategy.CACHED,
             perturbation=1e-10,
         )
         result = scf.solve(mol, options)
@@ -418,13 +402,12 @@ def test_aspirin_memory_analysis():
     molecule = sf.Molecule.from_geometry(atoms, basis_name="sto-3g")
 
     def total_energy(positions: jax.Array):
-        mol = _update_molecule_geometry(molecule, positions)
+        mol = molecule.with_positions(positions)
         basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
         options = scf.Options(
             solver=sf.fixed_point.LinearMixingParams(
                 max_iter=20, static_loop=True
             ),
-            integral_strategy=scf.IntegralStrategy.CACHED,
             perturbation=1e-10,
         )
         result = scf.solve(basis, options)

@@ -80,4 +80,4 @@ def add_tiles(
         _make_window_index(start, tiles.shape[i + 1], i, n_dim)
         for i, start in enumerate(starts)
     ]
-    return target.at[tuple(indices)].add(tiles)
+    return target.at[tuple(indices)].add(tiles.astype(target.dtype))

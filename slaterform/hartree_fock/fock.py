@@ -282,7 +282,7 @@ def two_electron_matrix(
         The two-electron Fock matrix. Shape: (n_basis, n_basis).
     """
     n_basis = basis.n_basis
-    G = jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
+    G = jnp.zeros((n_basis, n_basis), dtype=P.dtype)
     batch_operator = jax.vmap(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
@@ -295,6 +295,7 @@ def two_electron_matrix(
 
 def two_electron_integrals(
     basis: BatchedBasis,
+    dtype: jnp.dtype = jnp.float64,
 ) -> jax.Array:
     """Compute all two-electron integrals.
 
@@ -305,7 +306,7 @@ def two_electron_integrals(
         Shape: (n_basis, n_basis, n_basis, n_basis).
     """
     n_basis = basis.n_basis
-    V = jnp.zeros((n_basis,) * 4, dtype=jnp.float64)
+    V = jnp.zeros((n_basis,) * 4, dtype=dtype)
     batch_operator = jax.vmap(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
@@ -327,11 +328,13 @@ def two_electron_matrix_from_integrals(V: jax.Array, P: jax.Array) -> jax.Array:
     Returns:
         The two-electron Fock matrix. Shape: (n_basis, n_basis).
     """
+    V_cast = V.astype(P.dtype)
+
     # Coulomb contribution: G_ij += sum_{kl} (ij|kl) * P_lk
-    J = jnp.einsum("ijkl,lk->ij", V, P)
+    J = jnp.einsum("ijkl,lk->ij", V_cast, P)
 
     # Exchange contribution: G_ij -= 0.5 * (il|kj) * P_lk
-    K = jnp.einsum("ilkj,lk->ij", V, P)
+    K = jnp.einsum("ilkj,lk->ij", V_cast, P)
 
     G = J - 0.5 * K
     return G

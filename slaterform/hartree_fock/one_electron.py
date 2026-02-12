@@ -67,7 +67,7 @@ def _batch_step(
 
     # Also add the transpose for the symmetric entry if i!=j
     off_diagonal_mask = batch_data.mask * (i_start != j_start).astype(
-        jnp.float32
+        matrix.dtype
     )
 
     new_matrix = add_tiles(
@@ -110,7 +110,7 @@ def _one_electron_matrix(
     operator: OneElectronOperator,
 ) -> jax.Array:
     n_basis = basis.n_basis
-    matrix = jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
+    matrix = jnp.zeros((n_basis, n_basis), dtype=basis.dtype)
     batch_operator = jax.vmap(
         lambda b1, b2: one_electron_matrix(b1, b2, operator)
     )

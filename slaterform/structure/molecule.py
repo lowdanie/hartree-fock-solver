@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 import dataclasses
 
-import jax
+import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
 from slaterform.structure.atom import Atom
@@ -53,3 +53,10 @@ class Molecule:
     @property
     def n_basis(self) -> int:
         return sum(gto.n_basis for atom in self.atoms for gto in atom.shells)
+
+    @property
+    def dtype(self) -> jnp.dtype:
+        if not self.atoms:
+            return jnp.float64
+
+        return self.atoms[0].position.dtype

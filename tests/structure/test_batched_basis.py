@@ -84,6 +84,31 @@ _TEST_MOLECULE_H2O = sf.Molecule(
 )
 
 
+def test_dtype_empty():
+    basis = sf.BatchedBasis(
+        atoms=[],
+        basis_blocks=[],
+        block_starts=jnp.array([], dtype=np.int32),
+        block_atom_indices=jnp.array([], dtype=np.int32),
+        batches_1e=[],
+        batches_2e=[],
+    )
+    assert basis.dtype == jnp.float64
+
+
+def test_dtype_f64():
+    basis = jit(sf.BatchedBasis.from_molecule)(_TEST_MOLECULE_H2O)
+    assert basis.dtype == jnp.float64
+
+
+def test_dtype_f32():
+    basis = jit(sf.BatchedBasis.from_molecule)(_TEST_MOLECULE_H2O)
+    basis.basis_blocks[0].center = basis.basis_blocks[0].center.astype(
+        jnp.float32
+    )
+    assert basis.dtype == jnp.float32
+
+
 def test_atoms():
     basis = jit(sf.BatchedBasis.from_molecule)(_TEST_MOLECULE_H2O)
 

@@ -2,6 +2,7 @@ import dataclasses
 from collections.abc import Sequence
 
 import jax
+import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
 import slaterform.types as types
@@ -22,6 +23,7 @@ class Atom:
 
     def __post_init__(self):
         types.promote_dataclass_fields(self)
+        self.position = types.safe_cast(self.position, jnp.float64)
 
     def tree_flatten(self):
         children = (self.position, self.shells)

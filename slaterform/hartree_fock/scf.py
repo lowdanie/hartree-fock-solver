@@ -39,19 +39,47 @@ from slaterform.structure.nuclear import (
 )
 
 
-class IntegralStrategy(enum.IntEnum):
-    DIRECT = 0  # Re-computes integrals every step.
-    CACHED = 1  # Pre-computes O(N^4) tensor once.
+@register_pytree_node_class
+@dataclasses.dataclass
+class DirectStrategy:
+    """Compute two-electron integrals on the fly every iteration."""
+
+    def tree_flatten(self):
+        return (), None
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls()
+
+
+@register_pytree_node_class
+@dataclasses.dataclass
+class CachedStrategy:
+    """Precompute and cache the two-electron integrals tensor."""
+
+    dtype: jnp.dtype = jnp.float64
+
+    def tree_flatten(self):
+        children = ()
+        aux_data = (self.dtype,)
+        return children, aux_data
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        return cls(dtype=aux_data[0])
 
 
 SolverParams = AndersonParams | LinearMixingParams
+IntegralStrategy = DirectStrategy | CachedStrategy
 
 
 @register_pytree_node_class
 @dataclasses.dataclass
 class Options:
     solver: SolverParams = dataclasses.field(default_factory=LinearMixingParams)
-    integral_strategy: IntegralStrategy = IntegralStrategy.CACHED
+    integral_strategy: IntegralStrategy = dataclasses.field(
+        default_factory=CachedStrategy
+    )
     perturbation: types.Scalar = 1e-10
     implicit_diff: bool = False
 
@@ -168,8 +196,8 @@ def build_context(basis: BatchedBasis, options: Options) -> Context:
     nuclear_energy = nuclear_repulsion_energy(basis.atoms)
 
     V = None
-    if options.integral_strategy == IntegralStrategy.CACHED:
-        V = two_electron_integrals(basis)
+    if isinstance(options.integral_strategy, CachedStrategy):
+        V = two_electron_integrals(basis, dtype=options.integral_strategy.dtype)
 
     return Context(
         basis=basis,
@@ -183,15 +211,15 @@ def build_context(basis: BatchedBasis, options: Options) -> Context:
 
 def build_initial_density(system: BatchedBasis | Molecule) -> jax.Array:
     n_basis = system.n_basis
-    return jnp.zeros((n_basis, n_basis), dtype=jnp.float64)
+    return jnp.zeros((n_basis, n_basis), dtype=system.dtype)
 
 
 def _two_electron_matrix(
     P: jax.Array, context: Context, options: Options
 ) -> jax.Array:
-    if options.integral_strategy == IntegralStrategy.DIRECT:
+    if isinstance(options.integral_strategy, DirectStrategy):
         G = two_electron_matrix(context.basis, P)
-    elif options.integral_strategy == IntegralStrategy.CACHED:
+    elif isinstance(options.integral_strategy, CachedStrategy):
         if context.V is None:
             raise ValueError(
                 "Two-electron integrals tensor is not cached in context."

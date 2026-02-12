@@ -49,7 +49,8 @@ _TEST_P = np.array(
         [3, 7, 1, 2, 3],
         [4, 8, 2, 4, 5],
         [5, 9, 3, 5, 6],
-    ]
+    ],
+    dtype=np.float64,
 )
 
 # Computed via _brute_force_two_electron_matrix(_TEST_MOLECULE, _TEST_P)
@@ -139,9 +140,22 @@ def test_two_electron_matrix(mol, P, batch_size, expected):
 def test_two_electron_integrals(mol, batch_size, expected):
     basis = sf.BatchedBasis.from_molecule(mol, batch_size_2e=batch_size)
 
-    V_actual = jit(sf.hartree_fock.two_electron_integrals)(basis)
+    V_actual = jit(
+        sf.hartree_fock.two_electron_integrals, static_argnames=["dtype"]
+    )(basis)
 
     np.testing.assert_allclose(V_actual, expected, rtol=1e-7, atol=1e-7)
+
+
+def test_two_electron_integrals_f32():
+    basis = sf.BatchedBasis.from_molecule(_TEST_MOLECULE, batch_size_2e=2)
+
+    V_actual = jit(
+        sf.hartree_fock.two_electron_integrals, static_argnames=["dtype"]
+    )(basis, dtype=jnp.float32)
+
+    assert V_actual.dtype == jnp.float32
+    np.testing.assert_allclose(V_actual, _TEST_V, rtol=1e-7, atol=1e-7)
 
 
 def test_two_electron_matrix_from_integrals(

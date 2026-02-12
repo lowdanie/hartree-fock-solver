@@ -1,5 +1,6 @@
 import numpy as np
 
+import jax.numpy as jnp
 from tests.jax_utils import pytree_utils
 
 import slaterform as sf
@@ -20,6 +21,16 @@ def test_atom_pytree():
         ],
     )
     pytree_utils.assert_valid_pytree(atom)
+
+
+def test_float64():
+    atom = sf.Atom(
+        symbol="H",
+        number=1,
+        position=np.array([0.0, 0.0, 0.0], dtype=np.float32),
+    )
+
+    assert atom.position.dtype == jnp.float64
 
 
 def test_with_position():

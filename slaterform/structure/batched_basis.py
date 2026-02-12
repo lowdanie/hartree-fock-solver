@@ -80,6 +80,13 @@ class BatchedBasis:
         return sum(block.n_basis for block in self.basis_blocks)
 
     @property
+    def dtype(self) -> jnp.dtype:
+        if not self.basis_blocks:
+            return jnp.float64
+
+        return self.basis_blocks[0].center.dtype
+
+    @property
     def n_electrons(self) -> int:
         """The total number of electrons in the molecule."""
         return sum(atom.number for atom in self.atoms)

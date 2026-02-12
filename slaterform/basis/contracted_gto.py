@@ -2,6 +2,7 @@ import dataclasses
 import enum
 
 import jax
+import jax.numpy as jnp
 from jax.tree_util import register_pytree_node_class
 
 import slaterform.types as types
@@ -57,6 +58,8 @@ class ContractedGTO:
 
     def __post_init__(self):
         types.promote_dataclass_fields(self)
+        self.exponents = types.safe_cast(self.exponents, jnp.float64)
+        self.coefficients = types.safe_cast(self.coefficients, jnp.float64)
 
     def tree_flatten(self):
         children = (self.exponents, self.coefficients)
