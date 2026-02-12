@@ -87,18 +87,18 @@ class Options:
         types.promote_dataclass_fields(self)
 
     def tree_flatten(self):
-        children = (self.perturbation,)
-        aux_data = (
+        children = (
             self.solver,
             self.integral_strategy,
-            self.implicit_diff,
+            self.perturbation,
         )
+        aux_data = (self.implicit_diff,)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        solver, integral_strategy, implicit_diff = aux_data
-        perturbation = children[0]
+        implicit_diff = aux_data[0]
+        solver, integral_strategy, perturbation = children
         return cls(
             solver=solver,
             integral_strategy=integral_strategy,

@@ -114,6 +114,20 @@ Here is what the result looks like rendered by [3dmol](https://3dmol.org/doc/ind
   <img src="assets/images/h2o_density_cloud.png" width="600" alt="Electron Density of Water">
 </p>
 
+# Accuracy Benchmarks
+
+Here is a benchmark of total energies against [PySCF](https://pyscf.org/) using the sto-3g basis set. The table was generated using this [colab notebook](https://colab.research.google.com/github/lowdanie/hartree-fock-solver/blob/main/notebooks/pyscf_bench.ipynb)
+
+| Molecule | Atoms | f32 Error (Ha) | f64 Error (Ha)
+| :--- | :---: | :---: | :--- |
+| **Water** ($H_2O$) | 3 | $1.80 \times 10^{-6}$ | $2.32 \times 10^{-8}$ |
+| **Methane** ($CH_4$) | 5 | $4.59 \times 10^{-8}$ | $2.40 \times 10^{-9}$ |
+| **Ammonia** ($NH_3$) | 4 | $2.87 \times 10^{-7}$ | $1.66 \times 10^{-8}$ |
+| **Ethylene** ($C_2H_4$) | 6 | $9.30 \times 10^{-8}$ | $9.00 \times 10^{-9}$ |
+| **Benzene** ($C_6H_6$) | 12 | $2.37 \times 10^{-8}$ | $1.83 \times 10^{-8}$ |
+| **Butane** ($C_4H_{10}$) | 14 | $1.33 \times 10^{-7}$ | $2.90 \times 10^{-9}$ |
+| **Aspirin** ($C_9H_8O_4$) | 21 | $7.13 \times 10^{-6}$ | $6.04 \times 10^{-8}$ |
+
 # Installation 
 
 ```bash
