@@ -12,18 +12,16 @@ def load_molecule(name: str) -> sf.Molecule:
     return sf.Molecule.from_geometry(atoms, basis_name="sto-3g")
 
 
-def benchmark_jax(name, fn, *args):
+def benchmark_jax(name, f, *args):
     """
-    Benchmarks a JAX function, separating compile time from run time.
+    Benchmarks a jitted JAX function, separating compile time from run time.
     """
     print(f"\n--- {name} ---")
-
-    fn_jit = jax.jit(fn)
 
     # Compilation
     print("  Lowering...")
     start = time.time()
-    lowered = fn_jit.lower(*args)
+    lowered = f.lower(*args)
     print(f"  Done ({time.time() - start:.4f} s)")
 
     print("  Compiling...")
