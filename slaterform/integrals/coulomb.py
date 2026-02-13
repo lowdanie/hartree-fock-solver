@@ -164,7 +164,7 @@ def _V_vertical_transfer(
 
     Args:
       V: An array with shape (size_n,...)
-      size_new: The size of the new dimension. We assume size_new <= size_n.
+      size_new: The size of the new dimension. 1 <= size_new <= size_n.
       s, p: scaling factors
       A, C, P: positions.
     Returns:
@@ -179,7 +179,7 @@ def _V_vertical_transfer(
     v_i0 = V
     init_carry = (v_i0, jnp.zeros_like(v_i0))
     indices = jnp.arange(1, size_new)
-    _, v_rest = jax.lax.scan(step_fn, init_carry, indices)
+    _, v_rest = jax.lax.scan(step_fn, init_carry, indices, unroll=True)
 
     return jnp.concatenate(
         (v_i0[..., None], jnp.moveaxis(v_rest, 0, -1)), axis=-1
@@ -289,7 +289,7 @@ def _horizontal_transfer(
     step_fn = functools.partial(_horizontal_transfer_step, params)
 
     # I_rest will have shape (size_new-1, ..., src_size)
-    _, I_rest = jax.lax.scan(step_fn, I_j0, indices)
+    _, I_rest = jax.lax.scan(step_fn, I_j0, indices, unroll=True)
 
     # Move the scan axis to the end and concatenate with the base case.
     I_new = jnp.concatenate(
@@ -406,7 +406,7 @@ def _electron_transfer(
     step_fn = functools.partial(_electron_transfer_step, params)
 
     # I_rest will have shape (size_new-1, ..., src_size)
-    _, I_rest = jax.lax.scan(step_fn, init_carry, indices)
+    _, I_rest = jax.lax.scan(step_fn, init_carry, indices, unroll=True)
 
     # Move the scan axis to the end and concatenate with the base case.
     I_new = jnp.concatenate(
