@@ -40,3 +40,17 @@ def safe_cast(x: Any, dtype: jnp.dtype) -> jax.Array:
         return x.astype(dtype)
 
     return x
+
+
+def float_cast_pytree(tree: Any, dtype: jnp.dtype) -> Any:
+    """Recursively casts all floating point arrays in a pytree to dtype.
+
+    Leaves that are not floating point arrays are returned as is.
+    """
+
+    def _cast_leaf(x):
+        if isinstance(x, jax.Array) and jnp.issubdtype(x.dtype, jnp.floating):
+            return x.astype(dtype)
+        return x
+
+    return jax.tree.map(_cast_leaf, tree)

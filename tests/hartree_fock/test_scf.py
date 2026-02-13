@@ -253,6 +253,34 @@ def test_H2_integrals_f32():
     )
 
 
+def test_H2_integrals_compute_f32():
+    solve_fn = jit(scf.solve)
+    basis = sf.BatchedBasis.from_molecule(
+        _H2_MOLECULE, batch_size_1e=2, batch_size_2e=2
+    )
+    options = scf.Options(
+        solver=sf.fixed_point.LinearMixingParams(),
+        integral_strategy=scf.CachedStrategy(
+            dtype=jnp.float64, compute_dtype=jnp.float32
+        ),
+        perturbation=1e-10,
+        implicit_diff=False,
+    )
+
+    result = solve_fn(basis, options)
+
+    np.testing.assert_almost_equal(
+        result.electronic_energy,
+        _EXPECTED_ELECTRONIC_ENERGY_H2,
+        decimal=4,
+    )
+    np.testing.assert_almost_equal(
+        result.total_energy,
+        _EXPECTED_TOTAL_ENERGY_H2,
+        decimal=4,
+    )
+
+
 def test_H2_compile_only():
     lowered = jit(scf.solve).lower(_H2_MOLECULE)
     lowered.compile()

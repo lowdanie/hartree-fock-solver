@@ -9,6 +9,7 @@ from jax.tree_util import register_pytree_node_class
 
 
 import slaterform.types as types
+from slaterform.types import float_cast_pytree
 
 from slaterform.fixed_point.fixed_point import SolverStatus
 from slaterform.fixed_point.anderson import AndersonParams
@@ -57,16 +58,20 @@ class DirectStrategy:
 class CachedStrategy:
     """Precompute and cache the two-electron integrals tensor."""
 
+    # The type of the integral cache.
     dtype: jnp.dtype = jnp.float64
+
+    # The dtype to use during integral computation.
+    compute_dtype: jnp.dtype = jnp.float64
 
     def tree_flatten(self):
         children = ()
-        aux_data = (self.dtype,)
+        aux_data = (self.dtype, self.compute_dtype)
         return children, aux_data
 
     @classmethod
     def tree_unflatten(cls, aux_data, children):
-        return cls(dtype=aux_data[0])
+        return cls(dtype=aux_data[0], compute_dtype=aux_data[1])
 
 
 SolverParams = AndersonParams | LinearMixingParams
@@ -197,7 +202,9 @@ def build_context(basis: BatchedBasis, options: Options) -> Context:
 
     V = None
     if isinstance(options.integral_strategy, CachedStrategy):
-        V = two_electron_integrals(basis, dtype=options.integral_strategy.dtype)
+        strategy = options.integral_strategy
+        compute_basis = float_cast_pytree(basis, strategy.compute_dtype)
+        V = two_electron_integrals(compute_basis, dtype=strategy.dtype)
 
     return Context(
         basis=basis,
