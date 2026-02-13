@@ -66,18 +66,9 @@ class _GroupParams:
 class _BatchData(NamedTuple):
     tuple_indices: jax.Array  # Shape (batch_size, 4)
     mask: jax.Array  # Shape (batch_size,)
-    group_idx: jax.Array  # Shape (,)
-
-
-_BatchStep = Callable[
-    [_GroupParams, jax.Array, _BatchData], tuple[jax.Array, None]
-]
-
-_CapturedBatchStep = Callable[[jax.Array, _BatchData], tuple[jax.Array, None]]
 
 
 def _unpack_batch_group(
-    group_index: int,
     batch_group: BatchedTreeTuples,
     global_block_starts: jax.Array,
     batch_operator: _BlockOperator,
@@ -90,8 +81,6 @@ def _unpack_batch_group(
         mask: (num_batches, batch_size,)
         group_idx: (num_batches,)
     """
-    n_batches = batch_group.tuple_indices.shape[0]
-    group_idx = jnp.full((n_batches,), group_index, dtype=jnp.int32)
     stack_starts = tuple(
         global_block_starts[idx] for idx in batch_group.global_tree_indices
     )
@@ -99,65 +88,9 @@ def _unpack_batch_group(
     batch_data = _BatchData(
         batch_group.tuple_indices,
         batch_group.padding_mask,
-        group_idx,
     )
 
     return batch_data, params
-
-
-def _prepare_for_scan(
-    basis: BatchedBasis,
-    batch_operator: _BlockOperator,
-    batch_step: _BatchStep,
-    P: Optional[jax.Array] = None,
-) -> tuple[_BatchData, list[_CapturedBatchStep]]:
-    """Prepare batched tuples for a scan over batches.
-
-    basis.batches_2e contains a sequence of BatchedTreeTuples, each with
-    a batch size of batch_size.
-
-    The batches are combined into a single stack of _BatchData with shapes:
-        tuple_indices: (total_batches, batch_size, 4)
-        mask: (total_batches, batch_size,)
-        group_idx: (total_batches,)
-
-    For each group, a scan function is created that captures the corresponding
-    _GroupParams and can be used to process a batch from the group.
-    """
-    step_fns: list[_CapturedBatchStep] = []
-    batch_data_list: list[_BatchData] = []
-
-    for group_idx, batched_tuples in enumerate(basis.batches_2e):
-        batch_data, params = _unpack_batch_group(
-            group_idx,
-            batched_tuples,
-            jnp.asarray(basis.block_starts),
-            batch_operator,
-            P,
-        )
-
-        # Capture params in the step function
-        captured_step_fn = functools.partial(batch_step, params)
-        step_fns.append(captured_step_fn)
-        batch_data_list.append(batch_data)
-
-    batch_data_all = jax.tree.map(
-        lambda *args: jnp.concatenate(args, axis=0), *batch_data_list
-    )
-
-    return batch_data_all, step_fns
-
-
-def _scan_with_switch(
-    init_carry: jax.Array,
-    batch_data: _BatchData,
-    scan_fns: list[_CapturedBatchStep],
-) -> jax.Array:
-    def scan_body(carry: jax.Array, bd: _BatchData) -> tuple[jax.Array, None]:
-        return jax.lax.switch(bd.group_idx, scan_fns, carry, bd)
-
-    final_carry, _ = jax.lax.scan(scan_body, init_carry, batch_data)
-    return final_carry
 
 
 def _compute_batch_integrals(
@@ -286,11 +219,20 @@ def two_electron_matrix(
     batch_operator = jax.vmap(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
+    block_starts = jnp.asarray(basis.block_starts)
 
-    batch_data, scan_fns = _prepare_for_scan(
-        basis, batch_operator, jax.checkpoint(_matrix_step), P
-    )
-    return _scan_with_switch(G, batch_data, scan_fns)
+    for batched_tuples in basis.batches_2e:
+        batch_data, params = _unpack_batch_group(
+            batch_group=batched_tuples,
+            global_block_starts=block_starts,
+            batch_operator=batch_operator,
+            P=P,
+        )
+        step_fn = jax.checkpoint(_matrix_step)
+        scan_fn = functools.partial(step_fn, params)
+        G, _ = jax.lax.scan(scan_fn, G, batch_data)
+
+    return G
 
 
 def two_electron_integrals(
@@ -310,11 +252,21 @@ def two_electron_integrals(
     batch_operator = jax.vmap(
         functools.partial(two_electron_matrix_op, operator=two_electron)
     )
+    block_starts = jnp.asarray(basis.block_starts)
 
-    batch_data, scan_fns = _prepare_for_scan(
-        basis, batch_operator, jax.checkpoint(_integrals_step)
-    )
-    return _scan_with_switch(V, batch_data, scan_fns)
+    for batched_tuples in basis.batches_2e:
+        batch_data, params = _unpack_batch_group(
+            batch_group=batched_tuples,
+            global_block_starts=block_starts,
+            batch_operator=batch_operator,
+        )
+
+        step_fn = jax.checkpoint(_integrals_step)
+        scan_fn = functools.partial(step_fn, params)
+
+        V, _ = jax.lax.scan(scan_fn, V, batch_data)
+
+    return V
 
 
 def two_electron_matrix_from_integrals(V: jax.Array, P: jax.Array) -> jax.Array:
