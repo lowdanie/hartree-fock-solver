@@ -70,6 +70,17 @@ Here is a benchmark of total energies against [PySCF](https://pyscf.org/) using 
 | **Butane** ($C_4H_{10}$) | 14 | `1.33e-7` | `2.90e-9` |
 | **Aspirin** ($C_9H_8O_4$) | 21 | `7.13e-6` | `6.04e-8` |
 
+# Throughput Benchmarks
+
+Here is a performance benchmark of the solver on NVIDIA T4 and A100 GPUs. The benchmarks were run on Benzene ($C_6H_6$) with the `sto-3g` basis set (N=36). The mixed precision strategy computes integrals in `float32` but runs SCF in `float64`.
+
+| GPU | Mode | Batch Size | Throughput (mol/s) | Time per Mol (ms) |
+| :--- | :--- | :---: | :---: | :---: |
+| **T4** | Forward Only | 16 | **4.25** | 235 |
+| **T4** | Forward + Grad | 8 | **1.38** | 725 |
+| **A100** | Forward Only | 32 | **23.22** | 43 |
+| **A100** | Forward + Grad | 16 | **8.37** | 119 |
+
 # Quick Start
 
 Here is an example which estimates the electronic ground state of water using the STO-3G basis set from
